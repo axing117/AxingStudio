@@ -1,11 +1,19 @@
 import type { Database } from 'sql.js';
 
-export function runMigrations(db: Database): void {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS tasks (
+function migrateTasksCheckConstraint(db: Database): void {
+  // Check if the old schema (without 'blocked') is still in place
+  const result = db.exec("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'");
+  if (!result.length) return;
+  const sql = (result[0].values[0]?.[0] as string) ?? '';
+  if (sql.includes("'blocked'")) return; // already migrated
+
+  // Rebuild tasks table with the updated CHECK constraint
+  db.run('BEGIN');
+  try {
+    db.run(`CREATE TABLE tasks_v2 (
       id               TEXT PRIMARY KEY,
       type             TEXT NOT NULL CHECK(type IN ('oracle','forge','hermes')),
-      status           TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','completed','failed','retrying')),
+      status           TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('blocked','queued','running','completed','failed','retrying')),
       title            TEXT NOT NULL,
       input            TEXT NOT NULL DEFAULT '{}',
       output           TEXT,
@@ -14,6 +22,37 @@ export function runMigrations(db: Database): void {
       retry_count      INTEGER NOT NULL DEFAULT 0,
       max_retries      INTEGER NOT NULL DEFAULT 3,
       lease_expires_at TEXT,
+      depends_on       TEXT,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    db.run('INSERT INTO tasks_v2 SELECT id, type, status, title, input, output, error, agent_id, retry_count, max_retries, lease_expires_at, depends_on, created_at, updated_at FROM tasks');
+    db.run('DROP TABLE tasks');
+    db.run('ALTER TABLE tasks_v2 RENAME TO tasks');
+    db.run('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)');
+    db.run('COMMIT');
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  }
+}
+
+export function runMigrations(db: Database): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id               TEXT PRIMARY KEY,
+      type             TEXT NOT NULL CHECK(type IN ('oracle','forge','hermes')),
+      status           TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('blocked','queued','running','completed','failed','retrying')),
+      title            TEXT NOT NULL,
+      input            TEXT NOT NULL DEFAULT '{}',
+      output           TEXT,
+      error            TEXT,
+      agent_id         TEXT,
+      retry_count      INTEGER NOT NULL DEFAULT 0,
+      max_retries      INTEGER NOT NULL DEFAULT 3,
+      lease_expires_at TEXT,
+      depends_on       TEXT,
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     )
@@ -47,6 +86,12 @@ export function runMigrations(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)`);
+
+  // V2 DAG migration: add depends_on column to existing tables
+  try { db.run(`ALTER TABLE tasks ADD COLUMN depends_on TEXT`); } catch { /* already exists */ }
+
+  // V2 DAG migration: add 'blocked' to status CHECK constraint (SQLite requires table rebuild)
+  migrateTasksCheckConstraint(db);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS artifacts (

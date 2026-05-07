@@ -37,9 +37,43 @@ async function post(path: string, body: Record<string, unknown>) {
   return json.data!;
 }
 
+async function seedWorkflow() {
+  console.log('Seeding V2 DAG workflow...');
+  const data = await post('/api/workflows', {
+    tasks: [
+      {
+        type: 'oracle',
+        title: '拆解产品需求文档',
+        input: { brief: '分析用户提供的产品需求，输出结构化任务列表', source: 'seed-workflow' },
+        maxRetries: 2,
+        // index 0, no deps
+      },
+      {
+        type: 'forge',
+        title: '生成API模块骨架',
+        input: { brief: '基于策略室拆解结果，生成 TypeScript 接口和校验', source: 'seed-workflow' },
+        maxRetries: 2,
+        dependsOnIndexes: [0],
+      },
+      {
+        type: 'hermes',
+        title: '制作宣传预览视频',
+        input: { brief: '根据脚本生成 15 秒模拟预览视频', source: 'seed-workflow' },
+        maxRetries: 3,
+        dependsOnIndexes: [0],
+      },
+    ],
+  });
+  const tasks = data.tasks as { id: string; type: string; title: string; status: string }[];
+  for (const t of tasks) {
+    console.log(`  [${t.type}] ${t.title}  →  ${t.status}  (${t.id})`);
+  }
+}
+
 async function main() {
   console.log(`Seeding demo tasks → ${API}\n`);
 
+  // V1 flat seeding
   for (const t of DEMO_TASKS) {
     const data = await post('/api/tasks', {
       type: t.type,
@@ -49,7 +83,15 @@ async function main() {
     console.log(`  [${t.type}] ${t.title}  →  ${data.id}`);
   }
 
-  console.log(`\nDone. ${DEMO_TASKS.length} demo tasks created.`);
+  // V2 DAG workflow seeding
+  console.log('');
+  try {
+    await seedWorkflow();
+  } catch (err) {
+    console.error('Workflow seed failed:', (err as Error).message);
+  }
+
+  console.log(`\nDone. Demo tasks created.`);
   console.log('Dashboard: http://localhost:5173');
 }
 

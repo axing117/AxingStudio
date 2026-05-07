@@ -1,5 +1,6 @@
 // ===== Constants (also serve as runtime values) =====
 export const TaskStatus = {
+  Blocked: 'blocked',
   Queued: 'queued',
   Running: 'running',
   Completed: 'completed',
@@ -37,6 +38,8 @@ export const EventType = {
   TaskCompleted: 'task.completed',
   TaskFailed: 'task.failed',
   TaskRetrying: 'task.retrying',
+  TaskBlocked: 'task.blocked',
+  TaskUnblocked: 'task.unblocked',
   AgentRegistered: 'agent.registered',
   AgentOnline: 'agent.online',
   AgentOffline: 'agent.offline',
@@ -74,6 +77,7 @@ export interface Task {
   output?: Record<string, unknown>;
   error?: string;
   agentId?: string;
+  dependsOn?: string[];
   retryCount: number;
   maxRetries: number;
   leaseExpiresAt?: string;
@@ -117,11 +121,24 @@ export interface CreateTaskRequest {
   title: string;
   input: Record<string, unknown>;
   maxRetries?: number;
+  dependsOn?: string[];
 }
 
 export interface RegisterAgentRequest {
   name: string;
   type: AgentType;
+}
+
+export interface WorkflowTaskSpec {
+  type: TaskType;
+  title: string;
+  input: Record<string, unknown>;
+  maxRetries?: number;
+  dependsOnIndexes?: number[];
+}
+
+export interface CreateWorkflowRequest {
+  tasks: WorkflowTaskSpec[];
 }
 
 export interface ClaimRequest {

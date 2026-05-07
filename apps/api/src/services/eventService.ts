@@ -1,5 +1,6 @@
 import { getDb, getOne, getAll } from '../db/index.js';
 import type { EventType, TaskEvent } from '@axing/shared';
+import { broadcast } from './sseManager.js';
 
 export function recordEvent(type: EventType, taskId?: string, agentId?: string, data: Record<string, unknown> = {}): TaskEvent {
   const db = getDb();
@@ -8,7 +9,9 @@ export function recordEvent(type: EventType, taskId?: string, agentId?: string, 
   const row = getOne(db, 'SELECT last_insert_rowid() as id');
   const id = row?.id as number;
   const result = getOne(db, 'SELECT * FROM events WHERE id = ?', [id])!;
-  return rowToEvent(result);
+  const event = rowToEvent(result);
+  broadcast(event);
+  return event;
 }
 
 export function listEvents(limit = 50, offset = 0, taskId?: string): TaskEvent[] {

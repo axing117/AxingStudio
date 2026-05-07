@@ -8,7 +8,9 @@
     "build": "tsc && vite build"
   },
   "dependencies": {
+    "@axing/remotion": "*",
     "@axing/shared": "*",
+    "@remotion/player": "^4.0.457",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },

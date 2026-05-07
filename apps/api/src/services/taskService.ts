@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import type { Database } from 'sql.js';
 import { getDb, getOne, getAll, transaction } from '../db/index.js';
 import type { Task, CreateTaskRequest } from '@axing/shared';
 import { TaskStatus, TaskType } from '@axing/shared';
@@ -8,9 +9,11 @@ const LEASE_DURATION_SEC = 30;
 export function createTask(input: CreateTaskRequest): Task {
   const db = getDb();
   const id = uuid();
+  const deps = input.dependsOn?.length ? JSON.stringify(input.dependsOn) : null;
+  const status = deps ? 'blocked' : 'queued';
   db.run(
-    `INSERT INTO tasks (id, type, title, input, max_retries) VALUES (?, ?, ?, ?, ?)`,
-    [id, input.type, input.title, JSON.stringify(input.input), input.maxRetries ?? 3]
+    `INSERT INTO tasks (id, type, status, title, input, max_retries, depends_on) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, input.type, status, input.title, JSON.stringify(input.input), input.maxRetries ?? 3, deps]
   );
   return getTask(id)!;
 }
@@ -67,7 +70,7 @@ export function heartbeatTask(taskId: string): { leaseExpiresAt: string } | null
   return { leaseExpiresAt };
 }
 
-export function completeTask(taskId: string, output: Record<string, unknown>): Task | null {
+export function completeTask(taskId: string, output: Record<string, unknown>): { task: Task; unblockedIds: string[] } | null {
   const db = getDb();
   return transaction(db, () => {
     const task = getOne(db, "SELECT * FROM tasks WHERE id = ? AND status = 'running'", [taskId]);
@@ -82,8 +85,12 @@ export function completeTask(taskId: string, output: Record<string, unknown>): T
         [task.agent_id]
       );
     }
+
+    // Unblock dependents whose deps are now all satisfied
+    const unblockedIds = unblockDependents(db, taskId);
+
     const updated = getOne(db, 'SELECT * FROM tasks WHERE id = ?', [taskId]);
-    return rowToTask(updated!);
+    return { task: rowToTask(updated!), unblockedIds };
   });
 }
 
@@ -110,6 +117,25 @@ export function failTask(taskId: string, error: string): Task | null {
   });
 }
 
+function unblockDependents(db: Database, completedTaskId: string): string[] {
+  const unblocked: string[] = [];
+  const blocked = getAll(db, "SELECT * FROM tasks WHERE status = 'blocked' AND depends_on IS NOT NULL", []);
+  for (const row of blocked) {
+    let deps: string[];
+    try { deps = JSON.parse(row.depends_on as string); } catch { continue; }
+    if (!deps.includes(completedTaskId)) continue;
+    const allDone = deps.every(depId => {
+      const dep = getOne(db, "SELECT status FROM tasks WHERE id = ?", [depId]);
+      return dep && dep.status === 'completed';
+    });
+    if (allDone) {
+      db.run("UPDATE tasks SET status = 'queued', updated_at = datetime('now') WHERE id = ?", [row.id]);
+      unblocked.push(row.id as string);
+    }
+  }
+  return unblocked;
+}
+
 // ===== helpers =====
 function rowToTask(row: Record<string, unknown>): Task {
   return {
@@ -121,6 +147,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     output: row.output ? jsonParse(row.output as string) : undefined,
     error: row.error as string | undefined,
     agentId: row.agent_id as string | undefined,
+    dependsOn: row.depends_on ? JSON.parse(row.depends_on as string) : undefined,
     retryCount: row.retry_count as number,
     maxRetries: row.max_retries as number,
     leaseExpiresAt: row.lease_expires_at as string | undefined,

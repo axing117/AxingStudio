@@ -9,6 +9,9 @@
   "scripts": {
     "dev:api": "npm -w apps/api run dev",
     "dev:web": "npm -w apps/web run dev",
+    "dev:remotion": "npm -w apps/remotion run dev",
+    "render:remotion": "npm -w apps/remotion run render",
+    "still:remotion": "npm -w apps/remotion run still",
     "dev:agent": "npm -w workers/mock-agent run dev",
     "build": "npm -w packages/shared run build && npm -w apps/api run build"
   }

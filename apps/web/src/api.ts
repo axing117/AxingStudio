@@ -2,6 +2,7 @@ import type {
   Agent,
   ApiResponse,
   Artifact,
+  CreateWorkflowRequest,
   CreateTaskRequest,
   Task,
   TaskEvent,
@@ -10,6 +11,30 @@ import type {
 
 type Health = {
   status: string;
+};
+
+export type WorkflowResponse = {
+  tasks: Task[];
+  workflowId: string;
+};
+
+export type WorktreeFile = {
+  name: string;
+  size: number;
+};
+
+export type WorktreeInfo = {
+  taskId: string;
+  path: string;
+  branch: string;
+  files: WorktreeFile[];
+};
+
+export type VaultFile = {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: string;
 };
 
 export class ApiClientError extends Error {
@@ -39,6 +64,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
+async function requestText(path: string): Promise<string> {
+  const response = await fetch(path);
+  if (!response.ok) {
+    throw new ApiClientError(`文件请求失败：${response.statusText}`, response.status);
+  }
+  return response.text();
+}
+
 function query(params: Record<string, string | number | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -52,6 +85,11 @@ export const api = {
   health: () => request<Health>('/api/health'),
   agents: () => request<Agent[]>('/api/agents'),
   artifacts: (taskId?: string) => request<Artifact[]>(`/api/artifacts${query({ taskId })}`),
+  createWorkflow: (body: CreateWorkflowRequest) =>
+    request<WorkflowResponse>('/api/workflows', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   createTask: (body: CreateTaskRequest) =>
     request<Task>('/api/tasks', {
       method: 'POST',
@@ -60,4 +98,12 @@ export const api = {
   events: (limit = 50, offset = 0, taskId?: string) =>
     request<TaskEvent[]>(`/api/events${query({ limit, offset, taskId })}`),
   tasks: (status?: TaskStatus) => request<Task[]>(`/api/tasks${query({ status })}`),
+  worktrees: () => request<WorktreeInfo[]>('/api/worktrees'),
+  createWorktree: (taskId: string) =>
+    request<WorktreeInfo>(`/api/worktrees/${encodeURIComponent(taskId)}`, { method: 'POST' }),
+  removeWorktree: (taskId: string) =>
+    request<{ removed: boolean }>(`/api/worktrees/${encodeURIComponent(taskId)}`, { method: 'DELETE' }),
+  vaultFiles: (taskId: string) => request<VaultFile[]>(`/api/vault/${encodeURIComponent(taskId)}`),
+  vaultPreview: (taskId: string, filename: string) =>
+    requestText(`/api/vault/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`),
 };
