@@ -46,10 +46,11 @@ function detectCapabilities(): ExecutorCapabilityValue[] {
     return [];
   }
 
-  // Claude Code can plan, review, and generate docs
+  // Claude Code can plan, implement, review, and generate docs
   return [
     ExecutorCapability.OraclePlan,
     ExecutorCapability.OracleReview,
+    ExecutorCapability.ForgeImplement,
     ExecutorCapability.ForgeReview,
     ExecutorCapability.DocGenerate,
   ];
@@ -155,6 +156,18 @@ async function executeTask(executor: Executor, task: Task) {
 
     await uploadToVault(task.id, result.filename, result.fileContent);
     await createArtifact(task.id, result.artifact);
+
+    // For forge tasks, also create a worktree and write the generated file
+    if (task.type === 'forge') {
+      try {
+        await createWorktree(task.id);
+        await writeWorktreeFile(task.id, result.filename, result.fileContent);
+        log('executor', `worktree written: ${task.id}/${result.filename}`);
+      } catch (wtErr) {
+        log('executor', `worktree warning: ${formatError(wtErr)}`);
+      }
+    }
+
     await completeTask(task.id, result.output);
     log('executor', `completed ${task.title}, vault/${task.id}/${result.filename}`);
   } catch (error) {
@@ -330,6 +343,14 @@ async function createArtifact(
 
 async function uploadToVault(taskId: string, filename: string, content: string): Promise<void> {
   await post(`/api/vault/${taskId}`, { filename, content, encoding: 'utf8' });
+}
+
+async function createWorktree(taskId: string): Promise<void> {
+  await post(`/api/worktrees/${encodeURIComponent(taskId)}`, {});
+}
+
+async function writeWorktreeFile(taskId: string, filename: string, content: string): Promise<void> {
+  await post(`/api/worktrees/${encodeURIComponent(taskId)}/files`, { filename, content });
 }
 
 async function get<T>(path: string): Promise<T> {

@@ -30,6 +30,21 @@ export function worktreeRoutes(app: FastifyInstance): void {
     }
   });
 
+  // POST /api/worktrees/:taskId/files — write a file into the worktree
+  app.post('/api/worktrees/:taskId/files', async (req, reply) => {
+    const { taskId } = req.params as { taskId: string };
+    const { filename, content } = req.body as { filename: string; content: string };
+    if (!filename || content === undefined) {
+      return reply.status(400).send({ ok: false, error: 'filename and content required', code: ErrorCode.ValidationError });
+    }
+    try {
+      const file = wt.writeFile(taskId, filename, content);
+      return reply.status(201).send({ ok: true, data: file });
+    } catch (err) {
+      return reply.status(404).send({ ok: false, error: String(err), code: ErrorCode.TaskNotFound });
+    }
+  });
+
   // DELETE /api/worktrees/:taskId — remove worktree
   app.delete('/api/worktrees/:taskId', async (req, reply) => {
     const { taskId } = req.params as { taskId: string };

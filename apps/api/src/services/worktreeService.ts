@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { config } from '../config.js';
 
@@ -92,6 +92,15 @@ export function listWorktrees(): WorktreeInfo[] {
   return [...seen].map(id => {
     try { return getWorktree(id); } catch { return null; }
   }).filter(Boolean) as WorktreeInfo[];
+}
+
+export function writeFile(taskId: string, filename: string, content: string): { name: string; size: number } {
+  const wPath = worktreePath(taskId);
+  if (!existsSync(wPath)) throw new Error(`Worktree not found: ${taskId}`);
+  const safeName = basename(filename);
+  const filePath = join(wPath, safeName);
+  writeFileSync(filePath, content, 'utf8');
+  return { name: safeName, size: Buffer.byteLength(content, 'utf8') };
 }
 
 export function removeWorktree(taskId: string): boolean {
