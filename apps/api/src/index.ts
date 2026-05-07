@@ -8,6 +8,7 @@ import { eventRoutes } from './routes/events.js';
 import { artifactRoutes } from './routes/artifacts.js';
 import { vaultRoutes } from './routes/vault.js';
 import { worktreeRoutes } from './routes/worktree.js';
+import { systemRoutes } from './routes/system.js';
 import { markOfflineAgents } from './services/agentService.js';
 
 // Init DB before starting
@@ -24,6 +25,7 @@ eventRoutes(app);
 artifactRoutes(app);
 vaultRoutes(app);
 worktreeRoutes(app);
+systemRoutes(app);
 
 app.get('/api/health', async () => ({ ok: true, data: { status: 'alive' } }));
 

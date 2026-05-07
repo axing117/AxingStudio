@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Player } from '@remotion/player';
-import { AxingWorkshopScene, scene as axingWorkshopScene } from '@axing/remotion/player';
+import { LiveWorkshop } from './LiveWorkshop';
 import {
   AgentStatus,
   AgentType,
@@ -20,7 +19,7 @@ import type {
   TaskType as TaskTypeValue,
 } from '@axing/shared';
 import { ApiClientError, api } from './api';
-import type { VaultFile, WorktreeInfo } from './api';
+import type { SystemStatus, VaultFile, WorktreeInfo } from './api';
 
 type StatusFilter = TaskStatusValue | 'all';
 type RoomStatus = 'online' | 'warning' | 'error';
@@ -306,10 +305,24 @@ export function App() {
   const [selectedVaultFile, setSelectedVaultFile] = useState<string>('');
   const [vaultPreview, setVaultPreview] = useState<string>('');
   const [selectedRoomTone, setSelectedRoomTone] = useState<RoomTone>('command');
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ cpu: 0, memory: 0, uptime: 0, onlineAgents: 0, totalAgents: 0, queuedTasks: 0, runningTasks: 0 });
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 1_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function pollSystem() {
+      try {
+        const status = await api.systemStatus();
+        if (active) setSystemStatus(status);
+      } catch { /* silently ignore — sidebar shows last known or defaults */ }
+    }
+    pollSystem();
+    const timer = window.setInterval(pollSystem, 10_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -576,7 +589,7 @@ export function App() {
 
   return (
     <DashboardPage>
-      <DashboardLayout sidebar={<Sidebar />}>
+      <DashboardLayout sidebar={<Sidebar systemStatus={systemStatus} />}>
         <header className="hero-bar" id="overview">
           <div>
             <h2>阿星工坊</h2>
@@ -617,6 +630,8 @@ export function App() {
             selectedRoomTone={selectedRoomTone}
             onSelectRoom={setSelectedRoomTone}
             hotspotPositions={hotspotPositions}
+            latestEvent={data.events[0] ?? null}
+            tasks={data.tasks}
           />
 
           <RightPanel
@@ -670,7 +685,11 @@ function DashboardLayout({ sidebar, children }: { sidebar: ReactNode; children: 
   );
 }
 
-function Sidebar() {
+function Sidebar({ systemStatus }: { systemStatus: SystemStatus }) {
+  const statusText = systemStatus.runningTasks > 0
+    ? `${systemStatus.runningTasks} 个任务运行中`
+    : '所有系统运行正常';
+
   return (
     <aside className="left-nav" aria-label="阿星工坊导航">
       <div className="brand-block">
@@ -695,10 +714,11 @@ function Sidebar() {
       <div className="system-card">
         <span className="pulse is-live" />
         <strong>系统状态</strong>
-        <p>所有系统运行正常</p>
-        <Meter label="CPU" value={32} />
-        <Meter label="GPU" value={67} />
-        <Meter label="内存" value={48} />
+        <p>{statusText}</p>
+        <Meter label="CPU" value={systemStatus.cpu} />
+        <Meter label="内存" value={systemStatus.memory} />
+        <Meter label="在线" value={systemStatus.totalAgents > 0 ? Math.round((systemStatus.onlineAgents / systemStatus.totalAgents) * 100) : 0} />
+        <span style={{ fontSize: 11, color: '#9ef7f0', paddingLeft: 6 }}>{systemStatus.onlineAgents}/{systemStatus.totalAgents} 智能体</span>
       </div>
 
       <div className="operator-card">
@@ -729,12 +749,16 @@ function BaseOverview({
   selectedRoomTone,
   onSelectRoom,
   hotspotPositions,
+  latestEvent,
+  tasks,
 }: {
   rooms: RoomCardData[];
   dagOverlay: ReactNode;
   selectedRoomTone: RoomTone;
   onSelectRoom: (tone: RoomTone) => void;
   hotspotPositions: { tone: RoomTone; title: string; left: string; top: string }[];
+  latestEvent: TaskEvent | null;
+  tasks: Task[];
 }) {
   return (
     <section className="command-map" aria-label="六房间监控地图">
@@ -743,6 +767,8 @@ function BaseOverview({
         selectedRoomTone={selectedRoomTone}
         onSelectRoom={onSelectRoom}
         hotspotPositions={hotspotPositions}
+        latestEvent={latestEvent}
+        tasks={tasks}
       />
       {dagOverlay}
     </section>
@@ -847,11 +873,15 @@ function BaseMap({
   selectedRoomTone,
   onSelectRoom: _onSelectRoom,
   hotspotPositions: _hotspotPositions,
+  latestEvent,
+  tasks,
 }: {
   rooms: RoomCardData[];
   selectedRoomTone: RoomTone;
   onSelectRoom: (tone: RoomTone) => void;
   hotspotPositions: { tone: RoomTone; title: string; left: string; top: string }[];
+  latestEvent: TaskEvent | null;
+  tasks: Task[];
 }) {
   const selected = rooms.find((r) => r.tone === selectedRoomTone);
 
@@ -859,20 +889,7 @@ function BaseMap({
     <div className="base-map-container">
       <div className="base-map-frame">
         <div className="remotion-map-layer">
-          <Player
-            autoPlay
-            loop
-            muted
-            component={AxingWorkshopScene}
-            compositionHeight={axingWorkshopScene.height}
-            compositionWidth={axingWorkshopScene.width}
-            durationInFrames={axingWorkshopScene.durationInFrames}
-            fps={axingWorkshopScene.fps}
-            style={{
-              width: '100%',
-              height: '100%',
-            }}
-          />
+          <LiveWorkshop latestEvent={latestEvent} tasks={tasks} />
         </div>
       </div>
       {selected ? (

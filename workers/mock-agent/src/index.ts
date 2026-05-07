@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import {
   AgentType,
   ArtifactType,
@@ -23,6 +24,8 @@ const TASK_HEARTBEAT_MS = numberEnv('TASK_HEARTBEAT_MS', 10_000);
 const WORK_MIN_MS = numberEnv('WORK_MIN_MS', 4_000);
 const WORK_MAX_MS = numberEnv('WORK_MAX_MS', 9_000);
 const FAILURE_RATE = Math.max(0, Math.min(1, Number(process.env.FAILURE_RATE ?? '0')));
+const CLAUDE_PATH = process.env.CLAUDE_PATH || 'C:\\Users\\rochelimit\\.local\\bin\\claude.exe';
+const REAL_TIMEOUT_MS = numberEnv('REAL_TIMEOUT_MS', 120_000);
 
 const runnableTypes = [AgentType.Oracle, AgentType.Forge, AgentType.Hermes] as const;
 type RunnableAgentType = (typeof runnableTypes)[number];
@@ -97,6 +100,30 @@ async function executeTask(type: RunnableAgentType, agent: Agent, task: Task) {
       if (wt.path) {
         worktreePath = wt.path;
         log(type, `worktree created: ${wt.path} (branch: ${wt.branch})`);
+      }
+    }
+
+    // Real AI execution for oracle/forge
+    if (process.env.REAL_MODE === 'true' && (type === AgentType.Oracle || type === AgentType.Forge)) {
+      try {
+        const result = await executeRealTask(type, agent, task);
+        if (!taskHeartbeatFailed) {
+          await uploadToVault(task.id, result.filename, result.fileContent);
+          if (worktreePath) {
+            try {
+              writeFileSync(join(worktreePath, result.filename), result.fileContent);
+              log(type, `wrote to worktree: ${result.filename}`);
+            } catch (e) {
+              log(type, `worktree write failed: ${formatError(e)}`);
+            }
+          }
+          await createArtifact(task.id, result.artifact);
+          await completeTask(task.id, result.output);
+          log(type, `completed (real) ${task.title}, vault/${task.id}/${result.filename}`);
+          return;
+        }
+      } catch (e) {
+        log(type, `real mode failed, falling back to mock: ${formatError(e)}`);
       }
     }
 
@@ -290,6 +317,146 @@ function buildMockResult(type: RunnableAgentType, task: Task): {
       previewMode: 'mock-video',
       artifactPath: `vault/${task.id}/${filename}`,
       worker: 'hermes-mock',
+      completedAt: stamp,
+    },
+  };
+}
+
+type MockResult = ReturnType<typeof buildMockResult>;
+
+async function executeRealTask(
+  type: 'oracle' | 'forge',
+  agent: Agent,
+  task: Task,
+): Promise<MockResult> {
+  const prompt = buildPrompt(type, task);
+  log(type, `spawning Claude Code CLI...`);
+  const { stdout, stderr, exitCode } = await spawnClaude(prompt, REAL_TIMEOUT_MS);
+
+  if (exitCode !== 0) {
+    throw new Error(`Claude exit code ${exitCode}: ${stderr.slice(0, 300)}`);
+  }
+
+  const output = stdout.trim();
+  if (!output) {
+    throw new Error('Claude returned empty output');
+  }
+
+  return parseClaudeOutput(type, output, task);
+}
+
+function spawnClaude(
+  prompt: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(CLAUDE_PATH, ['-p', prompt], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+      resolve({ stdout, stderr, exitCode: code ?? -1 });
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+function buildPrompt(type: 'oracle' | 'forge', task: Task): string {
+  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
+
+  if (type === 'oracle') {
+    return `你是一个多智能体工坊"阿星工坊"的策略分析师（Oracle 角色）。
+你的职责：将用户需求拆解为结构化任务列表，分配给工程室(Forge)和媒体室(Hermes)。
+
+请分析以下需求，输出一份 Markdown 格式的策略文档：
+
+## 需求
+${brief}
+
+## 输出要求
+1. **需求概述**：一句话总结核心目标
+2. **任务拆解**：列出 3-5 个可执行子任务表格（序号/任务/类型/优先级），类型填 forge 或 hermes
+3. **风险提示**：点出关键风险点
+4. **建议下一步**：nextStep 字段，建议接下来交给哪个角色`;
+  }
+
+  return `你是一个多智能体工坊"阿星工坊"的工程师（Forge 角色）。
+你的职责：根据任务规格编写可执行的 TypeScript 代码。
+
+请根据以下任务规格生成实现代码：
+
+## 任务
+${brief}
+
+## 输出要求
+1. 完整的 TypeScript 模块，包含类型定义和主函数
+2. 代码整洁、可直接运行
+3. 底部包含 smoke test（if (require.main === module) 块）
+4. 输出纯代码，不要额外的解释文字`;
+}
+
+function parseClaudeOutput(
+  type: 'oracle' | 'forge',
+  raw: string,
+  task: Task,
+): MockResult {
+  const stamp = new Date().toISOString();
+  const fileSafeStamp = stamp.replace(/[:.]/g, '-');
+  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
+
+  if (type === 'oracle') {
+    const filename = `oracle-${fileSafeStamp}.md`;
+    return {
+      filename,
+      fileContent: raw,
+      artifact: {
+        type: ArtifactType.Text,
+        name: `Oracle brief - ${task.title}`,
+        path: `vault/${task.id}/${filename}`,
+        metadata: { role: 'strategy', brief, generatedAt: stamp, source: 'claude-code' },
+      },
+      output: {
+        summary: `已完成策略拆解：${brief}`,
+        nextStep: '交给 Forge 或 Hermes 继续执行',
+        artifactPath: `vault/${task.id}/${filename}`,
+        worker: 'oracle-claude-code',
+        completedAt: stamp,
+      },
+    };
+  }
+
+  const codeMatch = raw.match(/```(?:typescript|ts)\n([\s\S]*?)```/);
+  const fileContent = codeMatch ? codeMatch[1] : raw;
+  const filename = `forge-${fileSafeStamp}.ts`;
+
+  return {
+    filename,
+    fileContent,
+    artifact: {
+      type: ArtifactType.Code,
+      name: `Forge module - ${task.title}`,
+      path: `vault/${task.id}/${filename}`,
+      metadata: { role: 'engineering', generatedAt: stamp, source: 'claude-code' },
+    },
+    output: {
+      summary: `已生成工程模块草稿：${brief}`,
+      checks: ['claude-code-generated'],
+      artifactPath: `vault/${task.id}/${filename}`,
+      worker: 'forge-claude-code',
       completedAt: stamp,
     },
   };

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./player": "./src/player.ts"
+    "./player": "./src/player.ts",
+    "./workshopConfig": "./src/workshopConfig.ts"
   },
   "scripts": {
     "dev": "remotion studio src/index.ts --port 3002",

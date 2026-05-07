@@ -1,0 +1,565 @@
+/* ================================================================ */
+/*  LiveWorkshop — 实时数据驱动的像素风工作室场景                        */
+/*  所有动画从 Remotion 的 useCurrentFrame/interpolate 翻译为 CSS      */
+/* ================================================================ */
+
+/* ---- 容器 ---- */
+.live-workshop {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(56, 255, 232, 0.08), transparent 36%),
+    linear-gradient(180deg, #071012, #030607 72%);
+  font-family: "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+}
+
+.live-workshop .workshop-border {
+  position: absolute;
+  inset: 28px;
+  z-index: 2;
+  border: 2px solid rgba(96, 255, 236, 0.18);
+  box-shadow:
+    inset 0 0 60px rgba(80, 255, 230, 0.06),
+    0 0 48px rgba(0, 0, 0, 0.64);
+  background: rgba(3, 8, 10, 0.32);
+  pointer-events: none;
+}
+
+.live-workshop .workshop-title {
+  position: absolute;
+  left: 55px;
+  top: 20px;
+  z-index: 10;
+  color: #dffefd;
+  font-size: 30px;
+  font-weight: 900;
+  text-shadow: 0 0 16px rgba(85, 247, 237, 0.7);
+  pointer-events: none;
+}
+
+.live-workshop .workshop-status {
+  position: absolute;
+  right: 58px;
+  top: 26px;
+  z-index: 10;
+  color: #8be7db;
+  font-size: 18px;
+  font-weight: 800;
+  opacity: 0.86;
+  pointer-events: none;
+  animation: statusBlink 2s step-end infinite;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+}
+
+/* ---- 网格背景 (对应 GridBackdrop, offset = frame % 32) ---- */
+.grid-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(99, 255, 236, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 255, 236, 0.045) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.5;
+  animation: gridScroll 2.4s linear infinite;
+  pointer-events: none;
+}
+
+/* ---- 房间 ---- */
+.live-room {
+  position: absolute;
+  overflow: hidden;
+  border: 4px solid rgba(96, 255, 236, 0.18);
+  background: #05090b;
+  box-shadow:
+    0 0 24px rgba(96, 255, 236, 0.18),
+    inset 0 0 28px rgba(0, 0, 0, 0.52);
+  transition: border-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+.live-room.room-active {
+  border-color: rgba(255, 172, 66, 0.65);
+  box-shadow:
+    0 0 32px rgba(255, 172, 66, 0.28),
+    inset 0 0 32px rgba(0, 0, 0, 0.45);
+}
+
+.live-room.room-error {
+  border-color: rgba(255, 76, 76, 0.75);
+  box-shadow:
+    0 0 36px rgba(255, 76, 76, 0.32),
+    inset 0 0 32px rgba(0, 0, 0, 0.45);
+}
+
+.live-room.room-success {
+  border-color: rgba(80, 255, 152, 0.7);
+  box-shadow:
+    0 0 36px rgba(80, 255, 152, 0.3),
+    inset 0 0 32px rgba(0, 0, 0, 0.45);
+}
+
+.room-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  opacity: 0.85;
+}
+
+/* ---- 房间扫描线 (对应 RoomScanOverlay sweep: -16%→116%) ---- */
+.room-scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(var(--glow), 0.72), transparent);
+  box-shadow: 0 0 18px rgba(var(--glow), 0.4);
+  opacity: 0.44;
+  pointer-events: none;
+  animation: scanSweep 4.8s linear infinite;
+}
+
+/* ---- 房间脉冲 (对应 room pulse: 0.12→0.28→0.12) ---- */
+.room-pulse {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: radial-gradient(ellipse at 50% 70%, rgba(var(--glow), 0.2), transparent 62%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: roomPulse 3.6s ease-in-out infinite;
+}
+
+/* ---- 房间名 ---- */
+.room-name {
+  position: absolute;
+  left: 22px;
+  top: 18px;
+  z-index: 8;
+  padding: 8px 14px;
+  border: 3px solid;
+  background: rgba(4, 10, 12, 0.76);
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.3);
+}
+
+/* ---- 角色容器 ---- */
+.live-character {
+  position: absolute;
+  overflow: visible;
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) scale(var(--scale, 0.084));
+  animation: charIdle 3.2s ease-in-out infinite;
+}
+
+/* 角色阴影 (对应 Remotion 椭圆阴影 bob 变形) */
+.char-shadow {
+  position: absolute;
+  left: 420px;
+  bottom: -18px;
+  width: 410px;
+  height: 54px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.46);
+  filter: blur(3px);
+  transform-origin: center center;
+  animation: shadowBreathe 3.2s ease-in-out infinite;
+}
+
+/* 角色精灵 */
+.char-sprite {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  transform-origin: bottom center;
+  filter: drop-shadow(0 18px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 22px rgba(96, 255, 236, 0.33));
+}
+
+/* 角色光晕 (对应 Remotion lightPulse + blinkGlow) */
+.char-aura {
+  position: absolute;
+  left: 470px;
+  top: 375px;
+  width: 315px;
+  height: 170px;
+  border-radius: 90px;
+  background: radial-gradient(ellipse, var(--room-color, #55f7ed) 0%, transparent 66%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: auraPulse 3.2s ease-in-out infinite;
+}
+
+/* ============ 角色状态动画 ============ */
+
+/* idle — 对应 Remotion bob (0→-2.4→0) + 细微 headNod */
+.char-idle {
+  animation-name: charIdle;
+  animation-duration: 3.2s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* typing — 对应 Remotion faster bob + headNod */
+.char-typing {
+  animation-name: charWorking;
+  animation-duration: 0.9s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* coding — 类似 typing 但更快 */
+.char-coding {
+  animation-name: charWorking;
+  animation-duration: 0.7s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* editing — 类似 coding */
+.char-editing {
+  animation-name: charWorking;
+  animation-duration: 0.85s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* hologram — 对应 Remotion sway sin */
+.char-hologram {
+  animation-name: charHologram;
+  animation-duration: 3.1s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* archiving — 类似 hologram 但方向相反 */
+.char-archiving {
+  animation-name: charArchiving;
+  animation-duration: 2.9s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* checking — 对应 Remotion subtle movement */
+.char-checking {
+  animation-name: charChecking;
+  animation-duration: 1.6s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* error — 抖动 + 红色调 */
+.char-error {
+  animation-name: charError;
+  animation-duration: 0.3s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.char-error .char-sprite {
+  filter: drop-shadow(0 18px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 22px rgba(255, 76, 76, 0.55)) brightness(0.85) saturate(0.6);
+}
+
+/* success — 绿色光晕脉冲 */
+.char-success {
+  animation-name: charIdle;
+  animation-duration: 2.4s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.char-success .char-sprite {
+  filter: drop-shadow(0 18px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 28px rgba(80, 255, 152, 0.6));
+}
+
+/* ============ 动作像素 (ActionPixels) ============ */
+.ap-hand,
+.ap-bar,
+.ap-ring,
+.ap-diamond,
+.ap-block {
+  position: absolute;
+  display: block;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 左手 — typing/coding/editing 通用 */
+.ap-hand.left {
+  left: 300px;
+  top: 740px;
+  width: 124px;
+  height: 16px;
+  background: var(--color, #55f7ed);
+  opacity: 0.4;
+  box-shadow: 0 0 34px var(--color, #55f7ed);
+  animation: handMoveLeft 0.9s ease-in-out infinite;
+}
+
+/* 右手 */
+.ap-hand.right {
+  left: 830px;
+  top: 740px;
+  width: 124px;
+  height: 16px;
+  background: var(--color, #55f7ed);
+  opacity: 0.4;
+  box-shadow: 0 0 34px var(--color, #55f7ed);
+  animation: handMoveRight 0.9s ease-in-out infinite;
+}
+
+/* hologram 顶栏 */
+.ap-bar.top {
+  left: 810px;
+  top: 585px;
+  width: 160px;
+  height: 14px;
+  background: var(--color, #d56aff);
+  opacity: 0.45;
+  box-shadow: 0 0 34px var(--color, #d56aff);
+  animation: holoBarFloat 3.1s ease-in-out infinite;
+}
+
+/* hologram 光环 */
+.ap-ring {
+  left: 910px;
+  top: 460px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: var(--color, #d56aff);
+  opacity: 0.2;
+  box-shadow: 0 0 34px var(--color, #d56aff);
+  animation: holoRingPulse 3.1s ease-in-out infinite;
+}
+
+/* checking 菱形 */
+.ap-diamond {
+  left: 825px;
+  top: 585px;
+  width: 118px;
+  height: 118px;
+  background: var(--color, #50ff98);
+  opacity: 0.2;
+  transform: rotate(45deg);
+  box-shadow: 0 0 34px var(--color, #50ff98);
+  animation: diamondPulse 1.6s ease-in-out infinite;
+}
+
+/* checking 扫描条 */
+.ap-bar.side {
+  left: 883px;
+  top: 545px;
+  width: 18px;
+  height: 142px;
+  background: var(--color, #50ff98);
+  opacity: 0.4;
+  box-shadow: 0 0 34px var(--color, #50ff98);
+  animation: barFade 1.6s ease-in-out infinite;
+}
+
+/* archiving 底栏 */
+.ap-bar.bottom {
+  left: 290px;
+  top: 760px;
+  width: 168px;
+  height: 18px;
+  background: var(--color, #ffd85a);
+  opacity: 0.48;
+  box-shadow: 0 0 34px var(--color, #ffd85a);
+  animation: archiveBarFloat 2.9s ease-in-out infinite;
+}
+
+/* archiving 方块 */
+.ap-block {
+  left: 320px;
+  top: 670px;
+  width: 108px;
+  height: 74px;
+  background: var(--color, #ffd85a);
+  opacity: 0.2;
+  box-shadow: 0 0 34px var(--color, #ffd85a);
+  animation: blockPulse 2.9s ease-in-out infinite;
+}
+
+/* ============ 对话气泡 ============ */
+.live-bubble {
+  position: absolute;
+  z-index: 20;
+  max-width: 220px;
+  padding: 12px 16px;
+  border: 3px solid;
+  background: rgba(7, 12, 14, 0.86);
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.1;
+  image-rendering: pixelated;
+  white-space: nowrap;
+  animation: bubblePop 0.4s ease-out, bubbleFade 1s 3s ease-in forwards;
+}
+
+.bubble-text {
+  position: relative;
+  z-index: 1;
+}
+
+.bubble-tail {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  border-right: 3px solid;
+  border-bottom: 3px solid;
+  background: rgba(7, 12, 14, 0.86);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* ================================================ */
+/*  @keyframes — 从 Remotion interpolate 翻译        */
+/* ================================================ */
+
+/* 网格滚动 (对应 frame % 32 offset) */
+@keyframes gridScroll {
+  0% { background-position: 0 0; }
+  100% { background-position: 32px 32px; }
+}
+
+/* 房间扫描线 (对应 sweep: -16%→116%) */
+@keyframes scanSweep {
+  0% { top: -16%; }
+  100% { top: 116%; }
+}
+
+/* 房间脉冲 (对应 pulse: 0.12→0.28→0.12) */
+@keyframes roomPulse {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.32; }
+}
+
+/* 角色呼吸 bob (对应 bob: 0→-2.4→0) */
+@keyframes charIdle {
+  0%, 100% { transform: translate(-50%, -100%) translateY(0) scale(var(--scale, 0.084)); }
+  50% { transform: translate(-50%, -100%) translateY(-2.4px) scale(var(--scale, 0.084)); }
+}
+
+/* 阴影随 bob 缩放 */
+@keyframes shadowBreathe {
+  0%, 100% { transform: scaleX(1); opacity: 0.46; }
+  50% { transform: scaleX(0.96); opacity: 0.4; }
+}
+
+/* 光晕脉冲 (对应 lightPulse: 0.12→0.32→0.12) */
+@keyframes auraPulse {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.32; }
+}
+
+/* 工作中 — 快速 bob + 微微左右摆 */
+@keyframes charWorking {
+  0%, 100% { transform: translate(-50%, -100%) translateY(0) scale(var(--scale, 0.084)); }
+  25% { transform: translate(-50%, -100%) translateY(-1.6px) translateX(0.5px) scale(var(--scale, 0.084)); }
+  75% { transform: translate(-50%, -100%) translateY(-1.6px) translateX(-0.5px) scale(var(--scale, 0.084)); }
+}
+
+/* hologram 摇摆 (对应 sway: sin(frame/62 * PI * 2) * 0.8) */
+@keyframes charHologram {
+  0%, 100% { transform: translate(-50%, -100%) rotate(-0.8deg) scale(var(--scale, 0.084)); }
+  50% { transform: translate(-50%, -100%) rotate(0.8deg) scale(var(--scale, 0.084)); }
+}
+
+/* archiving 摇摆 (对应 sway: sin(frame/58 * PI * 2) * -0.6) */
+@keyframes charArchiving {
+  0%, 100% { transform: translate(-50%, -100%) rotate(0.6deg) scale(var(--scale, 0.084)); }
+  50% { transform: translate(-50%, -100%) rotate(-0.6deg) scale(var(--scale, 0.084)); }
+}
+
+/* checking — 微微缩放 */
+@keyframes charChecking {
+  0%, 100% { transform: translate(-50%, -100%) scale(var(--scale, 0.084)); }
+  50% { transform: translate(-50%, -100%) scale(calc(var(--scale, 0.084) * 1.01)); }
+}
+
+/* error — 左右抖动 */
+@keyframes charError {
+  0%, 100% { transform: translate(-50%, -100%) translateX(0) scale(var(--scale, 0.084)); }
+  10% { transform: translate(-50%, -100%) translateX(-3px) scale(var(--scale, 0.084)); }
+  30% { transform: translate(-50%, -100%) translateX(3px) scale(var(--scale, 0.084)); }
+  50% { transform: translate(-50%, -100%) translateX(-2px) scale(var(--scale, 0.084)); }
+  70% { transform: translate(-50%, -100%) translateX(2px) scale(var(--scale, 0.084)); }
+  90% { transform: translate(-50%, -100%) translateX(-1px) scale(var(--scale, 0.084)); }
+}
+
+/* 手动画 (对应 handMove: [-2, 2, -2]) */
+@keyframes handMoveLeft {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-8px); }
+}
+
+@keyframes handMoveRight {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(8px); }
+}
+
+/* hologram 效果动画 */
+@keyframes holoBarFloat {
+  0%, 100% { transform: translateY(0); opacity: 0.45; }
+  50% { transform: translateY(-4px); opacity: 0.6; }
+}
+
+@keyframes holoRingPulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.2; }
+  50% { transform: scale(1.05); opacity: 0.35; }
+}
+
+/* diamond 菱形脉冲 */
+@keyframes diamondPulse {
+  0%, 100% { transform: rotate(45deg) scale(0.95); opacity: 0.15; }
+  50% { transform: rotate(45deg) scale(1.05); opacity: 0.3; }
+}
+
+@keyframes barFade {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.55; }
+}
+
+/* archive 效果 */
+@keyframes archiveBarFloat {
+  0%, 100% { transform: translateY(0); opacity: 0.48; }
+  50% { transform: translateY(-3px); opacity: 0.6; }
+}
+
+@keyframes blockPulse {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.3; }
+}
+
+/* 气泡动画 */
+@keyframes bubblePop {
+  0% { transform: scale(0.85); opacity: 0; }
+  60% { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes bubbleFade {
+  to { opacity: 0; transform: translateY(-6px); }
+}
+
+/* 状态文字闪烁 */
+@keyframes statusBlink {
+  0%, 100% { opacity: 0.86; }
+  50% { opacity: 0.55; }
+}

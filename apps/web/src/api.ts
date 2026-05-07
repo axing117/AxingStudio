@@ -13,6 +13,16 @@ type Health = {
   status: string;
 };
 
+export type SystemStatus = {
+  cpu: number;
+  memory: number;
+  uptime: number;
+  onlineAgents: number;
+  totalAgents: number;
+  queuedTasks: number;
+  runningTasks: number;
+};
+
 export type WorkflowResponse = {
   tasks: Task[];
   workflowId: string;
@@ -83,6 +93,7 @@ function query(params: Record<string, string | number | undefined>): string {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  systemStatus: () => request<SystemStatus>('/api/system/status'),
   agents: () => request<Agent[]>('/api/agents'),
   artifacts: (taskId?: string) => request<Artifact[]>(`/api/artifacts${query({ taskId })}`),
   createWorkflow: (body: CreateWorkflowRequest) =>
