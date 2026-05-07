@@ -80,16 +80,19 @@ export function taskRoutes(app: FastifyInstance): void {
 
   app.post('/api/tasks/:id/claim', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { agentId } = req.body as ClaimRequest;
-    if (!agentId) return reply.status(400).send({ ok: false, error: 'agentId required', code: ErrorCode.ValidationError });
+    const body = req.body as ClaimRequest & { executorId?: string };
+    const claimerId = body.agentId || body.executorId;
+    if (!claimerId) return reply.status(400).send({ ok: false, error: 'agentId or executorId required', code: ErrorCode.ValidationError });
 
-    const agent = getOne(getDb(), 'SELECT id FROM agents WHERE id = ?', [agentId]);
-    if (!agent) return reply.status(404).send({ ok: false, error: 'Agent not found', code: ErrorCode.AgentNotFound });
+    // Check either agents or executors table
+    const found = getOne(getDb(), 'SELECT id FROM agents WHERE id = ?', [claimerId])
+      || getOne(getDb(), 'SELECT id FROM executors WHERE id = ?', [claimerId]);
+    if (!found) return reply.status(404).send({ ok: false, error: 'Claimer not found', code: ErrorCode.AgentNotFound });
 
-    const result = taskSvc.claimTask(id, agentId);
+    const result = taskSvc.claimTask(id, claimerId);
     if (!result) return reply.status(409).send({ ok: false, error: 'Task not claimable', code: ErrorCode.TaskNotClaimable });
 
-    eventSvc.recordEvent(EventType.TaskClaimed, id, agentId, {});
+    eventSvc.recordEvent(EventType.TaskClaimed, id, claimerId, {});
     return { ok: true, data: { task: result.task, leaseExpiresAt: result.leaseExpiresAt } };
   });
 

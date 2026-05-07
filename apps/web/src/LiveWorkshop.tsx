@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { rooms, characters } from '@axing/remotion/workshopConfig';
 import type { Task, TaskEvent } from '@axing/shared';
+import { CharExpression } from './CharExpression';
+import { StatusEffect } from './StatusEffect';
 import './LiveWorkshop.css';
 
 /* ------------------------------------------------------------------ */
@@ -323,6 +325,8 @@ function LiveCharacter({
         style={{ '--room-color': room.color } as React.CSSProperties}
       />
       <ActionPixels action={character.action} color={room.color} />
+      <CharExpression status={status} scale={character.scale * 1.55} />
+      <StatusEffect status={status} taskTitle={charState?.taskTitle} />
     </div>
   );
 }

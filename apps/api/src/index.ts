@@ -1,15 +1,19 @@
+import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { config } from './config.js';
 import { initDb } from './db/index.js';
 import { taskRoutes } from './routes/tasks.js';
 import { agentRoutes } from './routes/agents.js';
+import { executorRoutes } from './routes/executors.js';
 import { eventRoutes } from './routes/events.js';
 import { artifactRoutes } from './routes/artifacts.js';
 import { vaultRoutes } from './routes/vault.js';
 import { worktreeRoutes } from './routes/worktree.js';
 import { systemRoutes } from './routes/system.js';
+import { chatRoutes } from './routes/chat.js';
 import { markOfflineAgents } from './services/agentService.js';
+import { markOfflineExecutors } from './services/executorService.js';
 
 // Init DB before starting
 await initDb();
@@ -21,17 +25,20 @@ await app.register(cors, { origin: true });
 // Routes
 taskRoutes(app);
 agentRoutes(app);
+executorRoutes(app);
 eventRoutes(app);
 artifactRoutes(app);
 vaultRoutes(app);
 worktreeRoutes(app);
 systemRoutes(app);
+chatRoutes(app);
 
 app.get('/api/health', async () => ({ ok: true, data: { status: 'alive' } }));
 
-// Mark stale agents offline every 10s
+// Mark stale agents/executors offline every 10s
 setInterval(() => {
   try { markOfflineAgents(config.heartbeatTimeoutMs); } catch { /* silent */ }
+  try { markOfflineExecutors(config.heartbeatTimeoutMs); } catch { /* silent */ }
 }, 10_000);
 
 try {

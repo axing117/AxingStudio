@@ -72,6 +72,20 @@ export function runMigrations(db: Database): void {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS executors (
+      id                TEXT PRIMARY KEY,
+      name              TEXT NOT NULL,
+      type              TEXT NOT NULL CHECK(type IN ('claude-code','codex','mimo')),
+      status            TEXT NOT NULL DEFAULT 'offline' CHECK(status IN ('online','offline','busy','error')),
+      capabilities      TEXT NOT NULL DEFAULT '[]',
+      current_task_id   TEXT,
+      last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS events (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
       type      TEXT NOT NULL,
@@ -89,6 +103,9 @@ export function runMigrations(db: Database): void {
 
   // V2 DAG migration: add depends_on column to existing tables
   try { db.run(`ALTER TABLE tasks ADD COLUMN depends_on TEXT`); } catch { /* already exists */ }
+
+  // Executor migration: add preferred_executor column
+  try { db.run(`ALTER TABLE tasks ADD COLUMN preferred_executor TEXT`); } catch { /* already exists */ }
 
   // V2 DAG migration: add 'blocked' to status CHECK constraint (SQLite requires table rebuild)
   migrateTasksCheckConstraint(db);

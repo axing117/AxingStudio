@@ -1,14 +1,17 @@
+import { existsSync } from 'node:fs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  AgentType,
   ArtifactType,
+  ExecutorCapability,
+  ExecutorType,
   TaskStatus,
-  type Agent,
   type ApiResponse,
   type ArtifactType as ArtifactTypeValue,
   type ClaimResponse,
+  type Executor,
+  type ExecutorCapability as ExecutorCapabilityValue,
   type Task,
 } from '@axing/shared';
 
@@ -19,49 +22,96 @@ declare const process: {
 
 const API_URL = trimTrailingSlash(process.env.API_URL || 'http://localhost:3001');
 const POLL_MS = numberEnv('POLL_MS', 2_500);
-const AGENT_HEARTBEAT_MS = numberEnv('AGENT_HEARTBEAT_MS', 8_000);
+const EXECUTOR_HEARTBEAT_MS = numberEnv('EXECUTOR_HEARTBEAT_MS', 8_000);
 const TASK_HEARTBEAT_MS = numberEnv('TASK_HEARTBEAT_MS', 10_000);
-const WORK_MIN_MS = numberEnv('WORK_MIN_MS', 4_000);
-const WORK_MAX_MS = numberEnv('WORK_MAX_MS', 9_000);
-const FAILURE_RATE = Math.max(0, Math.min(1, Number(process.env.FAILURE_RATE ?? '0')));
 const CLAUDE_PATH = process.env.CLAUDE_PATH || 'C:\\Users\\rochelimit\\.local\\bin\\claude.exe';
-const REAL_TIMEOUT_MS = numberEnv('REAL_TIMEOUT_MS', 120_000);
+const CLAUDE_TIMEOUT_MS = numberEnv('CLAUDE_TIMEOUT_MS', 120_000);
 
-const runnableTypes = [AgentType.Oracle, AgentType.Forge, AgentType.Hermes] as const;
-type RunnableAgentType = (typeof runnableTypes)[number];
+// Capability -> task type mapping: which task roles this executor handles
+const TASK_ROLE_BY_CAP: Partial<Record<ExecutorCapabilityValue, string>> = {
+  [ExecutorCapability.OraclePlan]: 'oracle',
+  [ExecutorCapability.OracleReview]: 'oracle',
+  [ExecutorCapability.ForgeImplement]: 'forge',
+  [ExecutorCapability.ForgeReview]: 'forge',
+  [ExecutorCapability.ForgeVerify]: 'forge',
+  [ExecutorCapability.DocGenerate]: 'oracle',
+};
 
-async function main() {
-  const selectedTypes = parseAgentTypes(process.env.AGENT_TYPE);
-  log('system', `Mock agents connecting to ${API_URL}`);
-  log('system', `Enabled types: ${selectedTypes.join(', ')}`);
+/* ------------------------------------------------------------------ */
+/*  CLI 检测                                                           */
+/* ------------------------------------------------------------------ */
+function detectCapabilities(): ExecutorCapabilityValue[] {
+  if (!existsSync(CLAUDE_PATH)) {
+    log('system', `claude.exe not found at ${CLAUDE_PATH}`);
+    return [];
+  }
 
-  await Promise.all(selectedTypes.map((type) => runAgent(type)));
+  // Claude Code can plan, review, and generate docs
+  return [
+    ExecutorCapability.OraclePlan,
+    ExecutorCapability.OracleReview,
+    ExecutorCapability.ForgeReview,
+    ExecutorCapability.DocGenerate,
+  ];
 }
 
-async function runAgent(type: RunnableAgentType) {
-  const agent = await registerWithRetry(type);
-  const heartbeatTimer = setInterval(() => {
-    heartbeatAgent(agent.id).catch((error) => log(type, `agent heartbeat failed: ${formatError(error)}`));
-  }, AGENT_HEARTBEAT_MS);
+/* ------------------------------------------------------------------ */
+/*  主入口                                                              */
+/* ------------------------------------------------------------------ */
+async function main() {
+  log('system', `API: ${API_URL}`);
+  log('system', `Claude CLI: ${existsSync(CLAUDE_PATH) ? CLAUDE_PATH : 'NOT FOUND'}`);
 
-  log(type, `registered ${agent.name} (${agent.id})`);
+  const capabilities = detectCapabilities();
+
+  if (capabilities.length === 0) {
+    log('system', 'No local executors available. Install Claude Code CLI to enable local agents.');
+    log('system', 'Download: https://claude.ai/code');
+    return;
+  }
+
+  log('system', `Capabilities: ${capabilities.join(', ')}`);
+  await runExecutor(capabilities);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Executor 生命周期                                                    */
+/* ------------------------------------------------------------------ */
+async function runExecutor(capabilities: ExecutorCapabilityValue[]) {
+  const executor = await registerWithRetry(capabilities);
+
+  const heartbeatTimer = setInterval(() => {
+    heartbeatExecutor(executor.id).catch((error) =>
+      log('executor', `heartbeat failed: ${formatError(error)}`)
+    );
+  }, EXECUTOR_HEARTBEAT_MS);
+
+  log('executor', `registered ${executor.name} (${executor.id})`);
+
+  // Build set of task types we can handle
+  const handledTypes = new Set(
+    capabilities
+      .filter((c): c is keyof typeof TASK_ROLE_BY_CAP => c in TASK_ROLE_BY_CAP)
+      .map((c) => TASK_ROLE_BY_CAP[c])
+  );
 
   while (true) {
     try {
-      await heartbeatAgent(agent.id);
+      await heartbeatExecutor(executor.id);
       const queuedTasks = await getTasks(TaskStatus.Queued);
-      const task = queuedTasks.find((item) => item.type === type);
+      // Pick first task matching our capabilities
+      const task = queuedTasks.find((t) => handledTypes.has(t.type));
 
       if (!task) {
         await sleep(POLL_MS);
         continue;
       }
 
-      const claim = await claimTask(task.id, agent.id);
-      log(type, `claimed ${task.title} (${task.id}), lease ${claim.leaseExpiresAt}`);
-      await executeTask(type, agent, claim.task);
+      const claim = await claimTask(task.id, executor.id);
+      log('executor', `claimed ${task.title} (${task.id}), role=${task.type}, lease=${claim.leaseExpiresAt}`);
+      await executeTask(executor, claim.task);
     } catch (error) {
-      log(type, `loop warning: ${formatError(error)}`);
+      log('executor', `loop warning: ${formatError(error)}`);
       await sleep(POLL_MS);
     }
   }
@@ -69,272 +119,116 @@ async function runAgent(type: RunnableAgentType) {
   clearInterval(heartbeatTimer);
 }
 
-async function registerWithRetry(type: RunnableAgentType): Promise<Agent> {
+async function registerWithRetry(capabilities: ExecutorCapabilityValue[]): Promise<Executor> {
   while (true) {
     try {
-      return await post<Agent>('/api/agents/register', {
-        name: process.env.AGENT_NAME || defaultAgentName(type),
-        type,
+      return await post<Executor>('/api/executors/register', {
+        name: 'Claude Code Executor',
+        type: ExecutorType.ClaudeCode,
+        capabilities,
       });
     } catch (error) {
-      log(type, `waiting for API: ${formatError(error)}`);
+      log('executor', `waiting for API: ${formatError(error)}`);
       await sleep(3_000);
     }
   }
 }
 
-async function executeTask(type: RunnableAgentType, agent: Agent, task: Task) {
+/* ------------------------------------------------------------------ */
+/*  任务执行                                                            */
+/* ------------------------------------------------------------------ */
+async function executeTask(executor: Executor, task: Task) {
   let taskHeartbeatFailed = false;
   const taskHeartbeatTimer = setInterval(() => {
-    heartbeatTask(task.id, agent.id).catch((error) => {
+    heartbeatTask(task.id, executor.id).catch((error) => {
       taskHeartbeatFailed = true;
-      log(type, `task heartbeat stopped: ${formatError(error)}`);
+      log('executor', `task heartbeat stopped: ${formatError(error)}`);
     });
   }, TASK_HEARTBEAT_MS);
 
   try {
-    // Forge agents create an isolated worktree
-    let worktreePath = '';
-    if (type === AgentType.Forge) {
-      const wt = await createWorktree(task.id);
-      if (wt.path) {
-        worktreePath = wt.path;
-        log(type, `worktree created: ${wt.path} (branch: ${wt.branch})`);
-      }
-    }
-
-    // Real AI execution for oracle/forge
-    if (process.env.REAL_MODE === 'true' && (type === AgentType.Oracle || type === AgentType.Forge)) {
-      try {
-        const result = await executeRealTask(type, agent, task);
-        if (!taskHeartbeatFailed) {
-          await uploadToVault(task.id, result.filename, result.fileContent);
-          if (worktreePath) {
-            try {
-              writeFileSync(join(worktreePath, result.filename), result.fileContent);
-              log(type, `wrote to worktree: ${result.filename}`);
-            } catch (e) {
-              log(type, `worktree write failed: ${formatError(e)}`);
-            }
-          }
-          await createArtifact(task.id, result.artifact);
-          await completeTask(task.id, result.output);
-          log(type, `completed (real) ${task.title}, vault/${task.id}/${result.filename}`);
-          return;
-        }
-      } catch (e) {
-        log(type, `real mode failed, falling back to mock: ${formatError(e)}`);
-      }
-    }
-
-    const duration = randomBetween(WORK_MIN_MS, WORK_MAX_MS);
-    log(type, `working ${duration}ms on ${task.title}`);
-    await sleep(duration);
+    const result = await executeRealTask(task);
 
     if (taskHeartbeatFailed) {
       throw new Error('lease was lost before completion');
     }
 
-    if (Math.random() < FAILURE_RATE) {
-      await failTask(task.id, simulatedFailure(type));
-      log(type, `failed ${task.title}`);
-      return;
-    }
-
-    const result = buildMockResult(type, task);
     await uploadToVault(task.id, result.filename, result.fileContent);
-
-    // If worktree exists, also write the file there
-    if (worktreePath) {
-      try {
-        writeFileSync(join(worktreePath, result.filename), result.fileContent);
-        log(type, `wrote to worktree: ${result.filename}`);
-      } catch (e) {
-        log(type, `worktree write failed: ${formatError(e)}`);
-      }
-    }
-
     await createArtifact(task.id, result.artifact);
     await completeTask(task.id, result.output);
-    log(type, `completed ${task.title}, vault/${task.id}/${result.filename}`);
+    log('executor', `completed ${task.title}, vault/${task.id}/${result.filename}`);
+  } catch (error) {
+    log('executor', `task failed: ${formatError(error)}`);
+    try {
+      await failTask(task.id, formatError(error));
+    } catch (e) {
+      log('executor', `failTask API error: ${formatError(e)}`);
+    }
   } finally {
     clearInterval(taskHeartbeatTimer);
   }
 }
 
-function buildMockResult(type: RunnableAgentType, task: Task): {
-  filename: string;
-  fileContent: string;
-  artifact: {
-    type: ArtifactTypeValue;
-    name: string;
-    path: string;
-    metadata: Record<string, unknown>;
-  };
-  output: Record<string, unknown>;
-} {
+/* ------------------------------------------------------------------ */
+/*  真实 Claude CLI 执行                                                */
+/* ------------------------------------------------------------------ */
+function buildResult(task: Task, rawOutput: string) {
   const stamp = new Date().toISOString();
   const fileSafeStamp = stamp.replace(/[:.]/g, '-');
   const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
 
-  if (type === AgentType.Oracle) {
+  if (task.type === 'oracle') {
     const filename = `oracle-${fileSafeStamp}.md`;
-    const fileContent = [
-      `# ${task.title}`,
-      '',
-      `> 生成时间: ${stamp}`,
-      `> 来源: Oracle Mock Strategy`,
-      '',
-      '## 需求拆解',
-      '',
-      `**原始需求**: ${brief}`,
-      '',
-      '## 结构化任务列表',
-      '',
-      '| 序号 | 任务 | 类型 | 优先级 |',
-      '|------|------|------|--------|',
-      '| 1 | 接口定义与类型校验 | forge | P0 |',
-      '| 2 | 数据模型设计 | forge | P0 |',
-      '| 3 | 单元测试草稿 | forge | P1 |',
-      '| 4 | 预览视频脚本 | hermes | P1 |',
-      '| 5 | README 文档更新 | forge | P2 |',
-      '',
-      '## 风险提示',
-      '',
-      '- 输入数据未经过校验，需要上游确认 schema',
-      '- 视频资源需要提前准备素材',
-      '',
-      '---',
-      '_由阿星工坊 Oracle 策略室自动生成_',
-    ].join('\n');
-
     return {
       filename,
-      fileContent,
+      fileContent: rawOutput,
       artifact: {
         type: ArtifactType.Text,
-        name: `Oracle brief - ${task.title}`,
+        name: `Oracle — ${task.title}`,
         path: `vault/${task.id}/${filename}`,
-        metadata: { role: 'strategy', brief, generatedAt: stamp },
+        metadata: { role: 'strategy', brief, generatedAt: stamp, source: 'claude-code' },
       },
       output: {
-        summary: `已完成策略拆解：${brief}`,
+        summary: `策略拆解完成：${brief}`,
         nextStep: '交给 Forge 或 Hermes 继续执行',
         artifactPath: `vault/${task.id}/${filename}`,
-        worker: 'oracle-mock',
+        worker: 'claude-code-executor',
         completedAt: stamp,
       },
     };
   }
 
-  if (type === AgentType.Forge) {
-    const filename = `forge-${fileSafeStamp}.ts`;
-    const lines = randomBetween(24, 60);
-    const fileContent = [
-      `// ${task.title}`,
-      `// Generated by Forge Mock Engineer @ ${stamp}`,
-      `// Source: Axing Studio V2`,
-      '',
-      `export interface TaskSpec {`,
-      `  id: string;`,
-      `  title: string;`,
-      `  type: 'oracle' | 'forge' | 'hermes';`,
-      `  input: Record<string, unknown>;`,
-      `  status: 'blocked' | 'queued' | 'running' | 'completed' | 'failed' | 'retrying';`,
-      `}`,
-      '',
-      `export function validateTaskSpec(input: unknown): input is TaskSpec {`,
-      `  if (typeof input !== 'object' || input === null) return false;`,
-      `  const t = input as Record<string, unknown>;`,
-      `  return typeof t.id === 'string'`,
-      `    && typeof t.title === 'string'`,
-      `    && ['oracle','forge','hermes'].includes(t.type as string)`,
-      `    && typeof t.input === 'object';`,
-      `}`,
-      '',
-      `export function parseInput(raw: string): Record<string, unknown> {`,
-      `  try { return JSON.parse(raw); } catch { return {}; }`,
-      `}`,
-      '',
-      `// Smoke test (run: npx tsx this-file.ts)`,
-      `if (typeof require !== 'undefined' && require.main === module) {`,
-      `  console.log(validateTaskSpec({`,
-      `    id: 'test-1',`,
-      `    title: '${brief.replace(/'/g, "\\'")}',`,
-      `    type: 'forge',`,
-      `    input: {},`,
-      `    status: 'queued',`,
-      `  }) ? 'PASS' : 'FAIL');`,
-      `}`,
-      '',
-    ].join('\n');
-
-    return {
-      filename,
-      fileContent,
-      artifact: {
-        type: ArtifactType.Code,
-        name: `Forge module - ${task.title}`,
-        path: `vault/${task.id}/${filename}`,
-        metadata: { role: 'engineering', linesChanged: lines, generatedAt: stamp },
-      },
-      output: {
-        summary: `已生成工程模块草稿：${brief}`,
-        checks: ['type-shape', 'mock-build', 'readme-note'],
-        artifactPath: `vault/${task.id}/${filename}`,
-        worker: 'forge-mock',
-        completedAt: stamp,
-      },
-    };
-  }
-
-  const filename = `hermes-${fileSafeStamp}.json`;
-  const fileContent = JSON.stringify({
-    title: task.title,
-    type: 'video-preview',
-    durationSec: randomBetween(8, 18),
-    generatedAt: stamp,
-    worker: 'hermes-mock',
-    scenes: [
-      { index: 0, type: 'title-card', text: brief, durationSec: 3 },
-      { index: 1, type: 'transition', effect: 'fade', durationSec: 1 },
-      { index: 2, type: 'content', text: '阿星工坊 AI 媒体室自动生成', durationSec: 5 },
-      { index: 3, type: 'end-card', text: 'Axing Studio V2', durationSec: 3 },
-    ],
-  }, null, 2);
+  // forge — extract code block
+  const codeMatch = rawOutput.match(/```(?:typescript|ts)\n([\s\S]*?)```/);
+  const fileContent = codeMatch ? codeMatch[1] : rawOutput;
+  const filename = `forge-${fileSafeStamp}.ts`;
 
   return {
     filename,
     fileContent,
     artifact: {
-      type: ArtifactType.Video,
-      name: `Hermes preview - ${task.title}`,
+      type: ArtifactType.Code,
+      name: `Forge — ${task.title}`,
       path: `vault/${task.id}/${filename}`,
-      metadata: { role: 'media', durationSec: randomBetween(8, 18), generatedAt: stamp },
+      metadata: { role: 'engineering', generatedAt: stamp, source: 'claude-code' },
     },
     output: {
-      summary: `已生成媒体预览占位：${brief}`,
-      previewMode: 'mock-video',
+      summary: `工程执行完成：${brief}`,
+      checks: ['claude-code-generated'],
       artifactPath: `vault/${task.id}/${filename}`,
-      worker: 'hermes-mock',
+      worker: 'claude-code-executor',
       completedAt: stamp,
     },
   };
 }
 
-type MockResult = ReturnType<typeof buildMockResult>;
-
-async function executeRealTask(
-  type: 'oracle' | 'forge',
-  agent: Agent,
-  task: Task,
-): Promise<MockResult> {
-  const prompt = buildPrompt(type, task);
-  log(type, `spawning Claude Code CLI...`);
-  const { stdout, stderr, exitCode } = await spawnClaude(prompt, REAL_TIMEOUT_MS);
+async function executeRealTask(task: Task) {
+  const prompt = buildPrompt(task);
+  log('executor', `spawning Claude Code CLI...`);
+  const { stdout, stderr, exitCode } = await spawnClaude(prompt, CLAUDE_TIMEOUT_MS);
 
   if (exitCode !== 0) {
-    throw new Error(`Claude exit code ${exitCode}: ${stderr.slice(0, 300)}`);
+    throw new Error(`Claude exit ${exitCode}: ${stderr.slice(0, 300)}`);
   }
 
   const output = stdout.trim();
@@ -342,7 +236,7 @@ async function executeRealTask(
     throw new Error('Claude returned empty output');
   }
 
-  return parseClaudeOutput(type, output, task);
+  return buildResult(task, output);
 }
 
 function spawnClaude(
@@ -358,27 +252,18 @@ function spawnClaude(
     let stdout = '';
     let stderr = '';
 
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
+    child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+    child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
 
-    child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? -1 });
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
+    child.on('close', (code) => resolve({ stdout, stderr, exitCode: code ?? -1 }));
+    child.on('error', (err) => reject(err));
   });
 }
 
-function buildPrompt(type: 'oracle' | 'forge', task: Task): string {
+function buildPrompt(task: Task): string {
   const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
 
-  if (type === 'oracle') {
+  if (task.type === 'oracle') {
     return `你是一个多智能体工坊"阿星工坊"的策略分析师（Oracle 角色）。
 你的职责：将用户需求拆解为结构化任务列表，分配给工程室(Forge)和媒体室(Hermes)。
 
@@ -409,73 +294,23 @@ ${brief}
 4. 输出纯代码，不要额外的解释文字`;
 }
 
-function parseClaudeOutput(
-  type: 'oracle' | 'forge',
-  raw: string,
-  task: Task,
-): MockResult {
-  const stamp = new Date().toISOString();
-  const fileSafeStamp = stamp.replace(/[:.]/g, '-');
-  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
-
-  if (type === 'oracle') {
-    const filename = `oracle-${fileSafeStamp}.md`;
-    return {
-      filename,
-      fileContent: raw,
-      artifact: {
-        type: ArtifactType.Text,
-        name: `Oracle brief - ${task.title}`,
-        path: `vault/${task.id}/${filename}`,
-        metadata: { role: 'strategy', brief, generatedAt: stamp, source: 'claude-code' },
-      },
-      output: {
-        summary: `已完成策略拆解：${brief}`,
-        nextStep: '交给 Forge 或 Hermes 继续执行',
-        artifactPath: `vault/${task.id}/${filename}`,
-        worker: 'oracle-claude-code',
-        completedAt: stamp,
-      },
-    };
-  }
-
-  const codeMatch = raw.match(/```(?:typescript|ts)\n([\s\S]*?)```/);
-  const fileContent = codeMatch ? codeMatch[1] : raw;
-  const filename = `forge-${fileSafeStamp}.ts`;
-
-  return {
-    filename,
-    fileContent,
-    artifact: {
-      type: ArtifactType.Code,
-      name: `Forge module - ${task.title}`,
-      path: `vault/${task.id}/${filename}`,
-      metadata: { role: 'engineering', generatedAt: stamp, source: 'claude-code' },
-    },
-    output: {
-      summary: `已生成工程模块草稿：${brief}`,
-      checks: ['claude-code-generated'],
-      artifactPath: `vault/${task.id}/${filename}`,
-      worker: 'forge-claude-code',
-      completedAt: stamp,
-    },
-  };
-}
-
+/* ------------------------------------------------------------------ */
+/*  API 调用 helpers                                                   */
+/* ------------------------------------------------------------------ */
 async function getTasks(status: Task['status']): Promise<Task[]> {
   return get<Task[]>(`/api/tasks?status=${status}`);
 }
 
-async function heartbeatAgent(agentId: string): Promise<void> {
-  await post<{ ok: boolean }>(`/api/agents/${agentId}/heartbeat`, {});
+async function heartbeatExecutor(executorId: string): Promise<void> {
+  await post<{ ok: boolean }>(`/api/executors/${executorId}/heartbeat`, {});
 }
 
-async function claimTask(taskId: string, agentId: string): Promise<ClaimResponse> {
-  return post<ClaimResponse>(`/api/tasks/${taskId}/claim`, { agentId });
+async function claimTask(taskId: string, executorId: string): Promise<ClaimResponse> {
+  return post<ClaimResponse>(`/api/tasks/${taskId}/claim`, { agentId: executorId });
 }
 
-async function heartbeatTask(taskId: string, agentId: string): Promise<void> {
-  await post<{ ok: boolean; leaseExpiresAt: string }>(`/api/tasks/${taskId}/heartbeat`, { agentId });
+async function heartbeatTask(taskId: string, executorId: string): Promise<void> {
+  await post<{ ok: boolean; leaseExpiresAt: string }>(`/api/tasks/${taskId}/heartbeat`, { agentId: executorId });
 }
 
 async function completeTask(taskId: string, output: Record<string, unknown>): Promise<Task> {
@@ -484,15 +319,6 @@ async function completeTask(taskId: string, output: Record<string, unknown>): Pr
 
 async function failTask(taskId: string, error: string): Promise<Task> {
   return post<Task>(`/api/tasks/${taskId}/fail`, { error });
-}
-
-async function createWorktree(taskId: string): Promise<{ path: string; branch: string }> {
-  try {
-    return await post<{ path: string; branch: string }>(`/api/worktrees/${taskId}`, {});
-  } catch {
-    // Worktree creation is optional — agent can still work without it
-    return { path: '', branch: 'none' };
-  }
 }
 
 async function createArtifact(
@@ -511,63 +337,24 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  return request<T>(path, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  return request<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   });
-
   const payload = (await response.json()) as ApiResponse<T>;
-  if (!payload.ok) {
-    throw new Error(`${response.status} ${payload.code}: ${payload.error}`);
-  }
+  if (!payload.ok) throw new Error(`${response.status} ${payload.code}: ${payload.error}`);
   return payload.data;
 }
 
-function parseAgentTypes(value?: string): RunnableAgentType[] {
-  if (!value || value === 'all') return [...runnableTypes];
-
-  const selected = value
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item): item is RunnableAgentType => runnableTypes.includes(item as RunnableAgentType));
-
-  return selected.length > 0 ? selected : [...runnableTypes];
-}
-
-function defaultAgentName(type: RunnableAgentType): string {
-  const names: Record<RunnableAgentType, string> = {
-    [AgentType.Oracle]: 'Oracle Mock Strategy',
-    [AgentType.Forge]: 'Forge Mock Engineer',
-    [AgentType.Hermes]: 'Hermes Mock Media',
-  };
-  return names[type];
-}
-
-function simulatedFailure(type: RunnableAgentType): string {
-  const reasons: Record<RunnableAgentType, string> = {
-    [AgentType.Oracle]: 'mock strategy confidence below threshold',
-    [AgentType.Forge]: 'mock build check failed',
-    [AgentType.Hermes]: 'mock render timeout',
-  };
-  return reasons[type];
-}
-
+/* ------------------------------------------------------------------ */
+/*  工具函数                                                            */
+/* ------------------------------------------------------------------ */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randomBetween(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function numberEnv(name: string, fallback: number): number {

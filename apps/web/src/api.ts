@@ -4,6 +4,7 @@ import type {
   Artifact,
   CreateWorkflowRequest,
   CreateTaskRequest,
+  Executor,
   Task,
   TaskEvent,
   TaskStatus,
@@ -17,6 +18,8 @@ export type SystemStatus = {
   cpu: number;
   memory: number;
   uptime: number;
+  onlineExecutors: number;
+  totalExecutors: number;
   onlineAgents: number;
   totalAgents: number;
   queuedTasks: number;
@@ -94,6 +97,7 @@ function query(params: Record<string, string | number | undefined>): string {
 export const api = {
   health: () => request<Health>('/api/health'),
   systemStatus: () => request<SystemStatus>('/api/system/status'),
+  executors: () => request<Executor[]>('/api/executors'),
   agents: () => request<Agent[]>('/api/agents'),
   artifacts: (taskId?: string) => request<Artifact[]>(`/api/artifacts${query({ taskId })}`),
   createWorkflow: (body: CreateWorkflowRequest) =>

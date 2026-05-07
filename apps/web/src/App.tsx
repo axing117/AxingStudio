@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { LiveWorkshop } from './LiveWorkshop';
+import { ChatPanel } from './ChatPanel';
 import {
   AgentStatus,
   AgentType,
   ArtifactType,
+  ExecutorCapability,
   TaskStatus,
   TaskType,
 } from '@axing/shared';
@@ -13,6 +15,7 @@ import type {
   Artifact,
   CreateTaskRequest,
   CreateWorkflowRequest,
+  Executor,
   Task,
   TaskEvent,
   TaskStatus as TaskStatusValue,
@@ -116,6 +119,7 @@ type DashboardData = {
   health: string;
   tasks: Task[];
   agents: Agent[];
+  executors: Executor[];
   events: TaskEvent[];
   artifacts: Artifact[];
   lastUpdatedAt?: string;
@@ -125,6 +129,7 @@ const emptyData: DashboardData = {
   health: 'checking',
   tasks: [],
   agents: [],
+  executors: [],
   events: [],
   artifacts: [],
 };
@@ -158,10 +163,10 @@ const agentTypeLabels: Record<Agent['type'], string> = {
 };
 
 const agentDisplayNames: Record<Agent['type'], string> = {
-  [AgentType.Oracle]: '策略模拟节点',
-  [AgentType.Forge]: '工程模拟节点',
-  [AgentType.Hermes]: '媒体模拟节点',
-  [AgentType.Sentinel]: '质检模拟节点',
+  [AgentType.Oracle]: '策略室 (旧Agent)',
+  [AgentType.Forge]: '工程室 (旧Agent)',
+  [AgentType.Hermes]: '媒体室 (旧Agent)',
+  [AgentType.Sentinel]: '质量室 (旧Agent)',
 };
 
 const agentStatusLabels: Record<Agent['status'], string> = {
@@ -305,7 +310,7 @@ export function App() {
   const [selectedVaultFile, setSelectedVaultFile] = useState<string>('');
   const [vaultPreview, setVaultPreview] = useState<string>('');
   const [selectedRoomTone, setSelectedRoomTone] = useState<RoomTone>('command');
-  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ cpu: 0, memory: 0, uptime: 0, onlineAgents: 0, totalAgents: 0, queuedTasks: 0, runningTasks: 0 });
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ cpu: 0, memory: 0, uptime: 0, onlineExecutors: 0, totalExecutors: 0, onlineAgents: 0, totalAgents: 0, queuedTasks: 0, runningTasks: 0 });
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 1_000);
@@ -335,10 +340,11 @@ export function App() {
 
     async function load() {
       try {
-        const [health, tasks, agents, events, artifacts, worktreeList, vaultList] = await Promise.all([
+        const [health, tasks, agents, executors, events, artifacts, worktreeList, vaultList] = await Promise.all([
           api.health(),
           api.tasks(statusFilter === 'all' ? undefined : statusFilter),
           api.agents(),
+          api.executors(),
           api.events(200),
           api.artifacts(selectedTaskId || undefined),
           api.worktrees(),
@@ -350,6 +356,7 @@ export function App() {
           health: health.status,
           tasks,
           agents,
+          executors,
           events,
           artifacts,
           lastUpdatedAt: new Date().toISOString(),
@@ -504,6 +511,7 @@ export function App() {
   const allTasks = data.tasks;
   const runningTasks = allTasks.filter((task) => task.status === TaskStatus.Running);
   const failedTasks = allTasks.filter((task) => task.status === TaskStatus.Failed);
+  const onlineExecutors = data.executors.filter((e) => e.status === 'online' || e.status === 'busy');
   const onlineAgents = data.agents.filter((agent) => agent.status !== AgentStatus.Offline);
   const selectedTask = allTasks.find((task) => task.id === selectedTaskId);
   const visibleEvents = readableEvents(data.events);
@@ -513,6 +521,11 @@ export function App() {
   const selectedWorktree = selectedTaskId ? worktrees.find((item) => item.taskId === selectedTaskId) : undefined;
   const dagTasks = useMemo(() => buildDagTasks(allTasks), [allTasks]);
   const sseDetail = sseStatus === 'live' ? 'SSE 实时' : sseStatus === 'connecting' ? '连接中' : '手动刷新';
+
+  // Check if any online executor can handle a room's tasks
+  const roomHasExecutor = (caps: string[]): boolean =>
+    onlineExecutors.some((e) => e.capabilities.some((c) => caps.includes(c)));
+
   const rooms: RoomCardData[] = [
     {
       title: '指挥中心',
@@ -529,7 +542,8 @@ export function App() {
       subtitle: '需求拆解',
       value: countByTaskType(allTasks, TaskType.Oracle),
       tone: 'oracle',
-      status: onlineAgents.some((agent) => agent.type === AgentType.Oracle) ? 'online' : 'warning',
+      status: roomHasExecutor([ExecutorCapability.OraclePlan, ExecutorCapability.OracleReview])
+        ? 'online' : 'warning',
       description: '把业务目标拆成可执行计划与依赖顺序',
       operator: '策略分析师',
     },
@@ -538,7 +552,8 @@ export function App() {
       subtitle: '代码执行',
       value: countByTaskType(allTasks, TaskType.Forge),
       tone: 'forge',
-      status: onlineAgents.some((agent) => agent.type === AgentType.Forge) ? 'online' : 'warning',
+      status: roomHasExecutor([ExecutorCapability.ForgeImplement, ExecutorCapability.ForgeReview, ExecutorCapability.ForgeVerify])
+        ? 'online' : 'warning',
       description: '执行构建、脚本生成和工程产物编排',
       operator: '工程师',
     },
@@ -547,18 +562,20 @@ export function App() {
       subtitle: '视频与素材',
       value: countByTaskType(allTasks, TaskType.Hermes),
       tone: 'hermes',
-      status: onlineAgents.some((agent) => agent.type === AgentType.Hermes) ? 'online' : 'warning',
-      description: '处理视频渲染、素材整理和预览产物',
-      operator: '媒体剪辑师',
+      status: roomHasExecutor([ExecutorCapability.HermesMedia]) ? 'online' : 'error',
+      description: roomHasExecutor([ExecutorCapability.HermesMedia])
+        ? '处理视频渲染、素材整理和预览产物'
+        : '未接入 — 需要 MiMo Executor',
+      operator: roomHasExecutor([ExecutorCapability.HermesMedia]) ? '媒体剪辑师' : '未接入',
     },
     {
       title: '质量室',
       subtitle: '错误与审核',
       value: failedTasks.length,
       tone: 'sentinel',
-      status: failedTasks.length > 0 ? 'error' : 'online',
-      description: '监控失败任务、回归测试和风险告警',
-      operator: '质检员',
+      status: 'error',
+      description: '未接入 — 需要 Sentinel Executor',
+      operator: '未接入',
     },
     {
       title: '存储室',
@@ -652,6 +669,10 @@ export function App() {
           />
         </section>
 
+        <div style={{ height: 340, marginTop: 10 }}>
+          <ChatPanel />
+        </div>
+
         <BottomPanelGrid
           creatingWorktree={creatingWorktree}
           dashboardEventRows={dashboardEventRows}
@@ -717,8 +738,8 @@ function Sidebar({ systemStatus }: { systemStatus: SystemStatus }) {
         <p>{statusText}</p>
         <Meter label="CPU" value={systemStatus.cpu} />
         <Meter label="内存" value={systemStatus.memory} />
-        <Meter label="在线" value={systemStatus.totalAgents > 0 ? Math.round((systemStatus.onlineAgents / systemStatus.totalAgents) * 100) : 0} />
-        <span style={{ fontSize: 11, color: '#9ef7f0', paddingLeft: 6 }}>{systemStatus.onlineAgents}/{systemStatus.totalAgents} 智能体</span>
+        <Meter label="在线" value={systemStatus.totalExecutors > 0 ? Math.round((systemStatus.onlineExecutors / systemStatus.totalExecutors) * 100) : 0} />
+        <span style={{ fontSize: 11, color: '#9ef7f0', paddingLeft: 6 }}>{systemStatus.onlineExecutors}/{systemStatus.totalExecutors} 执行器</span>
       </div>
 
       <div className="operator-card">

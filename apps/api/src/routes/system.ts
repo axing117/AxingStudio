@@ -41,13 +41,24 @@ export function systemRoutes(app: FastifyInstance): void {
     const memory = sampleMemory();
     const uptime = Math.floor(process.uptime());
 
+    // Count from executors table
+    const execRows = getAll(getDb(), 'SELECT status, COUNT(*) as cnt FROM executors GROUP BY status');
+    let onlineExecutors = 0;
+    let totalExecutors = 0;
+    for (const row of execRows) {
+      const n = Number(row.cnt) || 0;
+      totalExecutors += n;
+      if (String(row.status) === 'online' || String(row.status) === 'busy') onlineExecutors += n;
+    }
+
+    // Also count from legacy agents table
     const agentRows = getAll(getDb(), 'SELECT status, COUNT(*) as cnt FROM agents GROUP BY status');
     let onlineAgents = 0;
     let totalAgents = 0;
     for (const row of agentRows) {
       const n = Number(row.cnt) || 0;
       totalAgents += n;
-      if (String(row.status) === 'online') onlineAgents = n;
+      if (String(row.status) === 'online') onlineAgents += n;
     }
 
     const taskRows = getAll(getDb(), 'SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status');
@@ -61,7 +72,12 @@ export function systemRoutes(app: FastifyInstance): void {
 
     return {
       ok: true,
-      data: { cpu, memory, uptime, onlineAgents, totalAgents, queuedTasks, runningTasks },
+      data: {
+        cpu, memory, uptime,
+        onlineExecutors, totalExecutors,
+        onlineAgents, totalAgents,
+        queuedTasks, runningTasks,
+      },
     };
   });
 }

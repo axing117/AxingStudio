@@ -16,6 +16,7 @@ export const TaskType = {
 } as const;
 export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
+// @deprecated — use ExecutorType instead
 export const AgentType = {
   Oracle: 'oracle',
   Forge: 'forge',
@@ -31,6 +32,37 @@ export const AgentStatus = {
 } as const;
 export type AgentStatus = (typeof AgentStatus)[keyof typeof AgentStatus];
 
+// ===== Executor model — real local agents =====
+export const ExecutorType = {
+  ClaudeCode: 'claude-code',
+  Codex: 'codex',
+  MiMo: 'mimo',
+} as const;
+export type ExecutorType = (typeof ExecutorType)[keyof typeof ExecutorType];
+
+export const ExecutorStatus = {
+  Online: 'online',
+  Offline: 'offline',
+  Busy: 'busy',
+  Error: 'error',
+} as const;
+export type ExecutorStatus = (typeof ExecutorStatus)[keyof typeof ExecutorStatus];
+
+// Capabilities an executor can declare
+export const ExecutorCapability = {
+  OraclePlan: 'oracle.plan',
+  OracleReview: 'oracle.review',
+  ForgeImplement: 'forge.implement',
+  ForgeReview: 'forge.review',
+  ForgeVerify: 'forge.verify',
+  HermesMedia: 'hermes.media',
+  DocGenerate: 'doc.generate',
+  CodeModify: 'code.modify',
+  TestRun: 'test.run',
+  BuildRun: 'build.run',
+} as const;
+export type ExecutorCapability = (typeof ExecutorCapability)[keyof typeof ExecutorCapability];
+
 export const EventType = {
   TaskCreated: 'task.created',
   TaskClaimed: 'task.claimed',
@@ -44,6 +76,10 @@ export const EventType = {
   AgentOnline: 'agent.online',
   AgentOffline: 'agent.offline',
   ArtifactCreated: 'artifact.created',
+  // Executor events
+  ExecutorRegistered: 'executor.registered',
+  ExecutorOnline: 'executor.online',
+  ExecutorOffline: 'executor.offline',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
 
@@ -60,6 +96,7 @@ export const ErrorCode = {
   TaskNotFound: 'TASK_NOT_FOUND',
   TaskNotClaimable: 'TASK_NOT_CLAIMABLE',
   AgentNotFound: 'AGENT_NOT_FOUND',
+  ExecutorNotFound: 'EXECUTOR_NOT_FOUND',
   LeaseExpired: 'LEASE_EXPIRED',
   InvalidTransition: 'INVALID_TRANSITION',
   NotYourTask: 'NOT_YOUR_TASK',
@@ -81,6 +118,7 @@ export interface Task {
   retryCount: number;
   maxRetries: number;
   leaseExpiresAt?: string;
+  preferredExecutor?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -90,6 +128,18 @@ export interface Agent {
   name: string;
   type: AgentType;
   status: AgentStatus;
+  currentTaskId?: string;
+  lastHeartbeatAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Executor {
+  id: string;
+  name: string;
+  type: ExecutorType;
+  status: ExecutorStatus;
+  capabilities: ExecutorCapability[];
   currentTaskId?: string;
   lastHeartbeatAt: string;
   createdAt: string;
@@ -122,11 +172,18 @@ export interface CreateTaskRequest {
   input: Record<string, unknown>;
   maxRetries?: number;
   dependsOn?: string[];
+  preferredExecutor?: ExecutorType;
 }
 
 export interface RegisterAgentRequest {
   name: string;
   type: AgentType;
+}
+
+export interface RegisterExecutorRequest {
+  name: string;
+  type: ExecutorType;
+  capabilities: ExecutorCapability[];
 }
 
 export interface WorkflowTaskSpec {

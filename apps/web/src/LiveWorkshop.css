@@ -563,3 +563,360 @@
   0%, 100% { opacity: 0.86; }
   50% { opacity: 0.55; }
 }
+
+/* ================================================================ */
+/*  表情系统 — CharExpression                                          */
+/* ================================================================ */
+
+.char-expression {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ---- 眼睛 ---- */
+.expr-eyes {
+  position: absolute;
+  top: 28%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 40px;
+}
+
+.expr-eye {
+  width: 28px;
+  height: 28px;
+  background: #fff;
+  border-radius: 50%;
+  position: relative;
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.expr-eye::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #1a1a2e;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transition: all 0.2s ease;
+}
+
+/* idle — 正常眨眼 */
+.expr-eyes-idle .expr-eye {
+  animation: eyeBlink 4s ease-in-out infinite;
+}
+
+/* working — 专注眯眼 + 快速眨眼 */
+.expr-eyes-working .expr-eye {
+  height: 20px;
+  animation: eyeFocusBlink 2s ease-in-out infinite;
+}
+
+.expr-eyes-working .expr-eye::after {
+  width: 10px;
+  height: 10px;
+}
+
+/* error — 瞪大眼 */
+.expr-eyes-error .expr-eye {
+  width: 36px;
+  height: 36px;
+  animation: eyeShock 0.5s ease-in-out;
+}
+
+.expr-eyes-error .expr-eye::after {
+  width: 18px;
+  height: 18px;
+  animation: eyePupilShake 0.3s ease-in-out infinite;
+}
+
+/* success — 微笑眯眼 */
+.expr-eyes-success .expr-eye {
+  height: 16px;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+}
+
+.expr-eyes-success .expr-eye::after {
+  width: 12px;
+  height: 8px;
+}
+
+/* ---- 嘴巴 ---- */
+.expr-mouth {
+  position: absolute;
+  top: 48%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 12px;
+  background: #2d1b1b;
+  border-radius: 0 0 12px 12px;
+  transition: all 0.3s ease;
+}
+
+/* idle — 正常 */
+.expr-mouth-idle {
+  width: 20px;
+  height: 8px;
+}
+
+/* working — 微张（专注） */
+.expr-mouth-working {
+  width: 16px;
+  height: 14px;
+  border-radius: 50%;
+  animation: mouthTalk 0.6s ease-in-out infinite;
+}
+
+/* error — 张大嘴（惊讶） */
+.expr-mouth-error {
+  width: 30px;
+  height: 24px;
+  border-radius: 50%;
+  background: #1a0a0a;
+  animation: mouthGasp 0.5s ease-in-out;
+}
+
+/* success — 微笑 */
+.expr-mouth-success {
+  width: 28px;
+  height: 10px;
+  border-radius: 0 0 14px 14px;
+  background: #2d1b1b;
+  border-bottom: 3px solid #1a1a2e;
+}
+
+/* ---- 汗滴 (working) ---- */
+.expr-sweat {
+  position: absolute;
+  top: 20%;
+  right: 15%;
+  width: 12px;
+  height: 18px;
+  background: linear-gradient(180deg, #87ceeb, #4fc3f7);
+  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
+  opacity: 0;
+  animation: sweatDrop 2s ease-in-out infinite;
+}
+
+/* ---- 腮红 (error) ---- */
+.expr-blush {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 20px;
+  background: radial-gradient(ellipse, rgba(255, 100, 100, 0.4), transparent);
+  border-radius: 50%;
+  animation: blushPulse 1s ease-in-out infinite;
+}
+
+/* ================================================================ */
+/*  状态特效 — StatusEffect                                            */
+/* ================================================================ */
+
+.status-effect {
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  pointer-events: none;
+}
+
+/* ---- error 感叹号 ---- */
+.status-error {
+  animation: effectAppear 0.3s ease-out;
+}
+
+.effect-icon {
+  font-size: 52px;
+  filter: drop-shadow(0 0 12px rgba(255, 76, 76, 0.8));
+  animation: exclamationBounce 0.6s ease-in-out infinite;
+}
+
+.effect-shake {
+  position: absolute;
+  top: -10px;
+  right: -20px;
+  font-size: 28px;
+  font-weight: 900;
+  color: #ff4c4c;
+  text-shadow: 0 0 8px rgba(255, 76, 76, 0.6);
+  animation: shakeRotate 0.4s ease-in-out infinite;
+}
+
+/* ---- success 星星 ---- */
+.status-success {
+  animation: effectAppear 0.4s ease-out;
+}
+
+.effect-stars {
+  display: flex;
+  gap: 8px;
+}
+
+.star {
+  font-size: 28px;
+  filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.8));
+}
+
+.star-1 {
+  animation: starTwinkle 0.8s ease-in-out infinite;
+  animation-delay: 0s;
+}
+
+.star-2 {
+  animation: starTwinkle 0.8s ease-in-out infinite;
+  animation-delay: 0.2s;
+}
+
+.star-3 {
+  animation: starTwinkle 0.8s ease-in-out infinite;
+  animation-delay: 0.4s;
+}
+
+/* ---- working 思考泡泡 ---- */
+.status-working {
+  top: -40px;
+  left: auto;
+  right: -30px;
+  transform: none;
+}
+
+.effect-thinking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: rgba(7, 12, 14, 0.8);
+  border: 2px solid rgba(245, 166, 35, 0.5);
+  border-radius: 12px;
+  padding: 8px 12px;
+  box-shadow: 0 0 12px rgba(245, 166, 35, 0.3);
+}
+
+.dot {
+  font-size: 8px;
+  color: #f5a623;
+  opacity: 0.3;
+}
+
+.dot-1 {
+  animation: dotPulse 1.2s ease-in-out infinite;
+  animation-delay: 0s;
+}
+
+.dot-2 {
+  animation: dotPulse 1.2s ease-in-out infinite;
+  animation-delay: 0.3s;
+}
+
+.dot-3 {
+  animation: dotPulse 1.2s ease-in-out infinite;
+  animation-delay: 0.6s;
+}
+
+.effect-task-hint {
+  margin-top: 4px;
+  font-size: 14px;
+  color: #f5a623;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/* ================================================================ */
+/*  表情 & 特效动画                                                    */
+/* ================================================================ */
+
+/* 眨眼 */
+@keyframes eyeBlink {
+  0%, 45%, 55%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+
+/* 专注眨眼 */
+@keyframes eyeFocusBlink {
+  0%, 40%, 50%, 100% { transform: scaleY(1); }
+  45% { transform: scaleY(0.2); }
+}
+
+/* 震惊眼睛 */
+@keyframes eyeShock {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* 瞳孔抖动 */
+@keyframes eyePupilShake {
+  0%, 100% { transform: translate(-50%, -50%); }
+  25% { transform: translate(-60%, -50%); }
+  75% { transform: translate(-40%, -50%); }
+}
+
+/* 嘴巴说话 */
+@keyframes mouthTalk {
+  0%, 100% { transform: translateX(-50%) scaleY(1); }
+  50% { transform: translateX(-50%) scaleY(1.3); }
+}
+
+/* 嘴巴惊讶 */
+@keyframes mouthGasp {
+  0% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.2); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+
+/* 汗滴 */
+@keyframes sweatDrop {
+  0% { opacity: 0; transform: translateY(0); }
+  30% { opacity: 0.8; }
+  70% { opacity: 0.8; transform: translateY(15px); }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+
+/* 腮红脉冲 */
+@keyframes blushPulse {
+  0%, 100% { opacity: 0.3; transform: translateX(-50%) scale(1); }
+  50% { opacity: 0.6; transform: translateX(-50%) scale(1.1); }
+}
+
+/* 感叹号弹跳 */
+@keyframes exclamationBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+/* 感叹号摇晃 */
+@keyframes shakeRotate {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg); }
+}
+
+/* 星星闪烁 */
+@keyframes starTwinkle {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  50% { transform: scale(1.3) rotate(15deg); opacity: 0.7; }
+}
+
+/* 思考点脉冲 */
+@keyframes dotPulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* 特效出现 */
+@keyframes effectAppear {
+  0% { transform: translateX(-50%) scale(0); opacity: 0; }
+  60% { transform: translateX(-50%) scale(1.2); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
