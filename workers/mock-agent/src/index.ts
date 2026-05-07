@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -14,6 +13,7 @@ import {
   type ExecutorCapability as ExecutorCapabilityValue,
   type Task,
 } from '@axing/shared';
+import { scanAgents } from './scanner/index.js';
 
 declare const process: {
   env: Record<string, string | undefined>;
@@ -38,41 +38,30 @@ const TASK_ROLE_BY_CAP: Partial<Record<ExecutorCapabilityValue, string>> = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  CLI 检测                                                           */
-/* ------------------------------------------------------------------ */
-function detectCapabilities(): ExecutorCapabilityValue[] {
-  if (!existsSync(CLAUDE_PATH)) {
-    log('system', `claude.exe not found at ${CLAUDE_PATH}`);
-    return [];
-  }
-
-  // Claude Code can plan, implement, review, and generate docs
-  return [
-    ExecutorCapability.OraclePlan,
-    ExecutorCapability.OracleReview,
-    ExecutorCapability.ForgeImplement,
-    ExecutorCapability.ForgeReview,
-    ExecutorCapability.DocGenerate,
-  ];
-}
-
-/* ------------------------------------------------------------------ */
 /*  主入口                                                              */
 /* ------------------------------------------------------------------ */
 async function main() {
   log('system', `API: ${API_URL}`);
-  log('system', `Claude CLI: ${existsSync(CLAUDE_PATH) ? CLAUDE_PATH : 'NOT FOUND'}`);
 
-  const capabilities = detectCapabilities();
+  // Scan for locally installed agents
+  const agents = scanAgents({ claudePath: CLAUDE_PATH });
 
-  if (capabilities.length === 0) {
-    log('system', 'No local executors available. Install Claude Code CLI to enable local agents.');
-    log('system', 'Download: https://claude.ai/code');
+  if (agents.length === 0) {
+    log('system', '未检测到本地 Agent。请安装 Claude Code CLI 或其他支持的本地 Agent。');
+    log('system', 'Claude Code 下载: https://claude.ai/code');
     return;
   }
 
-  log('system', `Capabilities: ${capabilities.join(', ')}`);
-  await runExecutor(capabilities);
+  for (const agent of agents) {
+    log('system', `检测到: ${agent.name} (${agent.type}) — ${agent.capabilities.join(', ')}`);
+  }
+
+  // Collect all capabilities from all detected agents
+  const capabilities = agents.flatMap(a => a.capabilities);
+  const uniqueCapabilities = [...new Set(capabilities)];
+  log('system', `总能力: ${uniqueCapabilities.join(', ')}`);
+
+  await runExecutor(uniqueCapabilities);
 }
 
 /* ------------------------------------------------------------------ */
