@@ -5,6 +5,9 @@ import { getOne } from '../db/index.js';
 import { getDb } from '../db/index.js';
 import { EventType, ErrorCode } from '@axing/shared';
 import type { CreateTaskRequest, ClaimRequest, HeartbeatRequest, CompleteRequest, FailRequest, CreateWorkflowRequest } from '@axing/shared';
+import { getTaskQueue } from '../services/taskQueue.js';
+import { checkAndRecord as sentinelCheck } from '../services/sentinelService.js';
+import { config } from '../config.js';
 
 export function taskRoutes(app: FastifyInstance): void {
   // POST /api/workflows — batch create tasks with index-based dependencies
@@ -48,6 +51,11 @@ export function taskRoutes(app: FastifyInstance): void {
     }
 
     const tasks = createdIds.map(id => taskSvc.getTask(id)!);
+    // Enqueue non-blocked tasks into the queue
+    const queue = getTaskQueue();
+    for (const t of tasks) {
+      if (t.status === 'queued') queue.enqueue(t.id, t.type);
+    }
     return reply.status(201).send({ ok: true, data: { tasks, workflowId: createdIds[0] } });
   });
 
@@ -61,6 +69,8 @@ export function taskRoutes(app: FastifyInstance): void {
       eventSvc.recordEvent(EventType.TaskBlocked, task.id, undefined, { title: task.title, type: task.type, dependsOn: body.dependsOn });
     } else {
       eventSvc.recordEvent(EventType.TaskCreated, task.id, undefined, { title: task.title, type: task.type });
+      // Enqueue into the task queue
+      getTaskQueue().enqueue(task.id, task.type);
     }
     return reply.status(201).send({ ok: true, data: task });
   });
@@ -126,7 +136,20 @@ export function taskRoutes(app: FastifyInstance): void {
     eventSvc.recordEvent(EventType.TaskCompleted, id, task.agentId, { output });
     for (const unblockedId of result.unblockedIds) {
       eventSvc.recordEvent(EventType.TaskUnblocked, unblockedId, undefined, { byTaskId: id });
+      // Enqueue newly unblocked tasks
+      const unblockedTask = taskSvc.getTask(unblockedId);
+      if (unblockedTask?.status === 'queued') getTaskQueue().enqueue(unblockedId, unblockedTask.type);
     }
+    // Notify queue of completion
+    getTaskQueue().handleComplete(id, task.type);
+
+    // Run Sentinel quality checks
+    try {
+      sentinelCheck(result.task, config.vaultRoot);
+    } catch (e) {
+      console.error('[Sentinel] check error:', e);
+    }
+
     return { ok: true, data: result.task };
   });
 
@@ -144,6 +167,13 @@ export function taskRoutes(app: FastifyInstance): void {
 
     const eventType = updated.status === 'retrying' ? EventType.TaskRetrying : EventType.TaskFailed;
     eventSvc.recordEvent(eventType, id, task.agentId, { error });
+    // Notify queue for retry/dead letter decision
+    if (updated.status === 'failed') {
+      getTaskQueue().handleFailure(id, task.type, error);
+    } else {
+      // Task was re-queued for retry — re-enqueue
+      getTaskQueue().enqueue(id, task.type);
+    }
     return { ok: true, data: updated };
   });
 }

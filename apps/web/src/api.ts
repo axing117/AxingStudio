@@ -50,6 +50,27 @@ export type VaultFile = {
   modifiedAt: string;
 };
 
+export type WorkflowGraphNode = {
+  id: string;
+  label: string;
+  type: string;
+  status: string;
+  retryCount: number;
+};
+
+export type WorkflowGraphEdge = {
+  from: string;
+  to: string;
+};
+
+export type WorkflowGraph = {
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
+  rootId: string;
+};
+
+export type QueueStats = Record<string, { queued: number; active: number; deadLetter: number }>;
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -121,4 +142,8 @@ export const api = {
   vaultFiles: (taskId: string) => request<VaultFile[]>(`/api/vault/${encodeURIComponent(taskId)}`),
   vaultPreview: (taskId: string, filename: string) =>
     requestText(`/api/vault/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`),
+  workflowGraph: (rootTaskId: string) =>
+    request<WorkflowGraph>(`/api/workflows/${encodeURIComponent(rootTaskId)}/graph`),
+  queueStats: () => request<QueueStats>('/api/queue/stats'),
+  deadLetter: () => request<{ taskId: string; priority: number; runAt: number; attempts: number }[]>('/api/queue/dead-letter'),
 };

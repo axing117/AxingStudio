@@ -96,10 +96,10 @@ export function runMigrations(db: Database): void {
     )
   `);
 
-  db.run(`CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)');
 
   // V2 DAG migration: add depends_on column to existing tables
   try { db.run(`ALTER TABLE tasks ADD COLUMN depends_on TEXT`); } catch { /* already exists */ }

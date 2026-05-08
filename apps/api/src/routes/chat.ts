@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { FastifyInstance } from 'fastify';
 import type { ServerResponse } from 'node:http';
 import * as taskSvc from '../services/taskService.js';
+import * as executorSvc from '../services/executorService.js';
 import { recordEvent } from '../services/eventService.js';
 import { getDb } from '../db/index.js';
 import { EventType } from '@axing/shared';
@@ -35,12 +36,26 @@ function parseRoom(message: string): string {
 function systemPrompt(room: string): string {
   const base = '你是一个多智能体工坊"阿星工坊"的一员。用中文回复。保持简洁。';
 
+  // 动态获取在线执行器的能力
+  const onlineExecutors = executorSvc.listExecutors().filter(e => e.status === 'online');
+  const capabilities = new Set(onlineExecutors.flatMap(e => e.capabilities));
+  
+  const hasOracle = capabilities.has('oracle.plan') || capabilities.has('oracle.review');
+  const hasForge = capabilities.has('forge.implement') || capabilities.has('forge.review');
+  const hasHermes = capabilities.has('hermes.media');
+
+  // 动态生成工作室列表
+  const rooms: string[] = [];
+  if (hasOracle) rooms.push('- @oracle (策略室): 需求分析、策略拆解');
+  if (hasForge) rooms.push('- @forge (工程室): 代码生成、工程实施');
+  if (hasHermes) rooms.push('- @hermes (媒体室): 图片生成、视频制作、媒体包装');
+
+  const roomsList = rooms.length > 0 ? rooms.join('\n') : '- 当前无可用工作室，请先启动Agent';
+
   const prompts: Record<string, string> = {
     command: `${base}
-你是运维指挥官。你可以将任务路由到三个工作室：
-- @oracle (策略室): 需求分析、策略拆解
-- @forge (工程室): 代码生成、工程实施
-- @hermes (媒体室): 视频制作、媒体包装
+你是运维指挥官。你可以将任务路由到以下工作室：
+${roomsList}
 
 当用户需求需要多个工作室协作时（比如"从零做一个系统"），
 正常回复后，在末尾用以下格式建议创建工作流：
@@ -62,7 +77,7 @@ function systemPrompt(room: string): string {
 你是工程师(Forge)。负责代码生成和工程实施。
 输出纯代码（TypeScript/JSON），不要额外解释。如果需要多文件，标注文件名。`,
     hermes: `${base}
-你是媒体剪辑师(Hermes)。负责视频脚本、媒体包装、预览生成。
+你是媒体剪辑师(Hermes)。负责图片生成、视频脚本、媒体包装、预览生成。
 输出 JSON 格式的场景描述，包含 type/durationSec/scenes 字段。`,
   };
 
@@ -392,6 +407,16 @@ export function chatRoutes(app: FastifyInstance): void {
 
         for (const id of blockedIds) {
           recordEvent(EventType.TaskBlocked, id, undefined, {});
+        }
+
+        // Enqueue non-blocked tasks into the queue
+        const { getTaskQueue } = await import('../services/taskQueue.js');
+        const queue = getTaskQueue();
+        for (const id of createdIds) {
+          if (!blockedIds.includes(id)) {
+            const t = taskSvc.getTask(id);
+            if (t?.status === 'queued') queue.enqueue(id, t.type);
+          }
         }
 
         sseWrite(res, 'done', {

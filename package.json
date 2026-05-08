@@ -13,6 +13,8 @@
     "render:remotion": "npm -w apps/remotion run render",
     "still:remotion": "npm -w apps/remotion run still",
     "dev:agent": "npm -w workers/mock-agent run dev",
+    "dev:mimo": "npm -w workers/mimo-worker run dev",
+    "dev:agent-runtime": "npm -w apps/agent-runtime run dev",
     "build": "npm -w packages/shared run build && npm -w apps/api run build"
   }
 }

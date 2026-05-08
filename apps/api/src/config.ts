@@ -1,12 +1,12 @@
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// 使用环境变量或 process.cwd() 作为基础目录
+const baseDir = process.env.AXING_API_DIR || process.cwd();
 
 export const config = {
   port: Number(process.env.PORT) || 3001,
   host: process.env.HOST || '0.0.0.0',
-  dbPath: process.env.DB_PATH || resolve(__dirname, '..', 'axing.db'),
-  vaultRoot: process.env.VAULT_ROOT || resolve(__dirname, '..', '..', '..', 'vault'),
+  dbPath: process.env.DB_PATH || resolve(baseDir, 'axing.db'),
+  vaultRoot: process.env.VAULT_ROOT || resolve(baseDir, '..', 'vault'),
   heartbeatTimeoutMs: 30_000,
 };

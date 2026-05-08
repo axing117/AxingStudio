@@ -725,7 +725,7 @@
 
 .status-effect {
   position: absolute;
-  top: -60px;
+  top: 12%;
   left: 50%;
   transform: translateX(-50%);
   z-index: 15;
@@ -786,9 +786,9 @@
 
 /* ---- working 思考泡泡 ---- */
 .status-working {
-  top: -40px;
+  top: 8%;
   left: auto;
-  right: -30px;
+  right: 5%;
   transform: none;
 }
 

@@ -1,0 +1,33 @@
+{
+  "title": "Smoke-Hermes",
+  "type": "video-preview",
+  "durationSec": 9,
+  "generatedAt": "2026-05-06T11:26:57.423Z",
+  "worker": "hermes-mock",
+  "scenes": [
+    {
+      "index": 0,
+      "type": "title-card",
+      "text": "Smoke-Hermes",
+      "durationSec": 3
+    },
+    {
+      "index": 1,
+      "type": "transition",
+      "effect": "fade",
+      "durationSec": 1
+    },
+    {
+      "index": 2,
+      "type": "content",
+      "text": "阿星工坊 AI 媒体室自动生成",
+      "durationSec": 5
+    },
+    {
+      "index": 3,
+      "type": "end-card",
+      "text": "Axing Studio V2",
+      "durationSec": 3
+    }
+  ]
+}

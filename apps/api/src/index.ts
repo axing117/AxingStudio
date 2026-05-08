@@ -12,8 +12,13 @@ import { vaultRoutes } from './routes/vault.js';
 import { worktreeRoutes } from './routes/worktree.js';
 import { systemRoutes } from './routes/system.js';
 import { chatRoutes } from './routes/chat.js';
+import { queueRoutes } from './routes/queue.js';
+import { workflowRoutes } from './routes/workflows.js';
+import { sentinelRoutes } from './routes/sentinel.js';
 import { markOfflineAgents } from './services/agentService.js';
 import { markOfflineExecutors } from './services/executorService.js';
+import { getTaskQueue } from './services/taskQueue.js';
+import { registerErrorHandler } from './middleware/errorHandler.js';
 
 // Init DB before starting
 await initDb();
@@ -32,8 +37,18 @@ vaultRoutes(app);
 worktreeRoutes(app);
 systemRoutes(app);
 chatRoutes(app);
+queueRoutes(app);
+workflowRoutes(app);
+sentinelRoutes(app);
+
+// Global error handler
+registerErrorHandler(app);
 
 app.get('/api/health', async () => ({ ok: true, data: { status: 'alive' } }));
+
+// Start task queue processor
+const queue = getTaskQueue();
+queue.start();
 
 // Mark stale agents/executors offline every 10s
 setInterval(() => {

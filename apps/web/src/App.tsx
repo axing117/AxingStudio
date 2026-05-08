@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { LiveWorkshop } from './LiveWorkshop';
 import { ChatPanel } from './ChatPanel';
+import { DagView } from './DagView';
 import {
   AgentStatus,
   AgentType,
@@ -256,23 +257,23 @@ const deploySteps: DeployStepData[] = [
   { name: '部署', duration: '21秒' },
 ];
 
-const metricCards: MetricCardData[] = [
-  { title: '在线智能体', value: '24', delta: '+12.5%', trend: 'up', tone: 'cyan', icon: '智', points: [15, 17, 16, 20, 19, 24, 22, 25, 23, 27, 24, 28] },
-  { title: '运行中任务', value: '58', delta: '+8.1%', trend: 'up', tone: 'violet', icon: '▶', points: [28, 26, 29, 30, 35, 33, 38, 36, 42, 40, 45, 43] },
-  { title: '失败任务', value: '2', delta: '+33.3%', trend: 'up', tone: 'red', icon: '!', points: [8, 7, 9, 8, 10, 11, 9, 12, 11, 14, 13, 16] },
-  { title: '今日成本', value: '¥142.38', delta: '-4.3%', trend: 'down', tone: 'aqua', icon: '¥', points: [44, 43, 41, 42, 39, 38, 36, 35, 34, 32, 33, 31] },
-  { title: '队列深度', value: '17', delta: '+5', trend: 'up', tone: 'indigo', icon: '列', points: [10, 12, 11, 14, 13, 17, 16, 18, 17, 20, 19, 22] },
+const metricCardsTemplate = (status: SystemStatus): MetricCardData[] => [
+  { title: '在线智能体', value: String(status.onlineAgents), delta: `+${status.onlineAgents}`, trend: 'up', tone: 'cyan', icon: '智', points: [15, 17, 16, 20, 19, status.onlineAgents, 22, 25, 23, 27, status.onlineAgents, 28] },
+  { title: '运行中任务', value: String(status.runningTasks), delta: `+${status.runningTasks}`, trend: 'up', tone: 'violet', icon: '▶', points: [28, 26, 29, 30, 35, 33, 38, 36, 42, 40, status.runningTasks, 43] },
+  { title: '排队任务', value: String(status.queuedTasks), delta: `${status.queuedTasks}`, trend: status.queuedTasks > 5 ? 'up' : 'down', tone: 'red', icon: '!', points: [8, 7, 9, 8, 10, 11, 9, 12, 11, 14, status.queuedTasks, 16] },
+  { title: 'CPU', value: `${status.cpu}%`, delta: '', trend: status.cpu > 80 ? 'up' : 'down', tone: 'aqua', icon: '¥', points: [44, 43, 41, 42, 39, 38, 36, 35, 34, 32, status.cpu, 31] },
+  { title: '执行器', value: `${status.onlineExecutors}/${status.totalExecutors}`, delta: '', trend: 'up', tone: 'indigo', icon: '列', points: [10, 12, 11, 14, 13, 17, 16, 18, 17, 20, status.onlineExecutors, 22] },
 ];
 
 const DEBUG_ANCHORS = false;
 
 const characters: CharacterConfig[] = [
-  { id: 'command', name: '运维指挥官', src: '/assets/sprites/commander.png', x: '17.5%', y: '44.5%', width: '3.2%', action: 'idle' },
-  { id: 'strategy', name: '策略分析师', src: '/assets/sprites/strategist.png', x: '48.5%', y: '43.5%', width: '3.2%', action: 'thinking' },
-  { id: 'engineering', name: '工程师', src: '/assets/sprites/engineer.png', x: '78.5%', y: '44.5%', width: '3.2%', action: 'typing' },
-  { id: 'media', name: '媒体剪辑师', src: '/assets/sprites/media.png', x: '17.5%', y: '85.5%', width: '3.2%', action: 'editing' },
-  { id: 'quality', name: '质检员', src: '/assets/sprites/qa.png', x: '48.5%', y: '85.5%', width: '3.2%', action: 'checking' },
-  { id: 'storage', name: '存储管理员', src: '/assets/sprites/storage.png', x: '78.5%', y: '85.5%', width: '3.2%', action: 'idle' },
+  { id: 'command', name: '运维指挥官', src: './assets/sprites/commander.png', x: '17.5%', y: '44.5%', width: '3.2%', action: 'idle' },
+  { id: 'strategy', name: '策略分析师', src: './assets/sprites/strategist.png', x: '48.5%', y: '43.5%', width: '3.2%', action: 'thinking' },
+  { id: 'engineering', name: '工程师', src: './assets/sprites/engineer.png', x: '78.5%', y: '44.5%', width: '3.2%', action: 'typing' },
+  { id: 'media', name: '媒体剪辑师', src: './assets/sprites/media.png', x: '17.5%', y: '85.5%', width: '3.2%', action: 'editing' },
+  { id: 'quality', name: '质检员', src: './assets/sprites/qa.png', x: '48.5%', y: '85.5%', width: '3.2%', action: 'checking' },
+  { id: 'storage', name: '存储管理员', src: './assets/sprites/storage.png', x: '78.5%', y: '85.5%', width: '3.2%', action: 'idle' },
 ];
 
 const effectZones: EffectZone[] = [
@@ -305,6 +306,7 @@ export function App() {
   const [sseStatus, setSseStatus] = useState<SseStatus>('connecting');
   const [dependencyDraft, setDependencyDraft] = useState<string>('');
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const [dagViewTaskId, setDagViewTaskId] = useState<string | null>(null);
   const [expandedWorktreeTaskId, setExpandedWorktreeTaskId] = useState<string>('');
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
   const [selectedVaultFile, setSelectedVaultFile] = useState<string>('');
@@ -629,18 +631,19 @@ export function App() {
           </div>
         ) : null}
 
-        <TopStatsBar metrics={metricCards} />
+        <TopStatsBar metrics={metricCardsTemplate(systemStatus)} />
 
         <section className="dashboard-grid">
           <BaseOverview
             dagOverlay={(
-              <DagOverlay
+              <DagPanel
                 tasks={dagTasks}
                 selectedTaskId={selectedTaskId}
                 onSelectTask={(task) => {
                   setSelectedTaskId(task.id);
                   setSelectedMonitorTaskName(displayTaskTitle(task));
                 }}
+                onViewDag={(taskId) => setDagViewTaskId(taskId)}
               />
             )}
             rooms={rooms}
@@ -659,6 +662,8 @@ export function App() {
             monitorQueueRows={monitorQueueRows}
             selectedMonitorTaskName={selectedMonitorTaskName}
             selectedTaskId={selectedTaskId}
+            onlineCount={systemStatus.onlineAgents}
+            queuedCount={systemStatus.queuedTasks}
             onCreateDemoTask={createDemoTask}
             onCreateDemoWorkflow={createDemoWorkflow}
             onDependencyDraftChange={setDependencyDraft}
@@ -689,6 +694,20 @@ export function App() {
           onToggleWorktree={() => setExpandedWorktreeTaskId(expandedWorktreeTaskId === selectedTaskId ? '' : selectedTaskId)}
         />
       </DashboardLayout>
+
+      {/* DAG 可视化覆盖层 */}
+      {dagViewTaskId && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 24,
+        }}>
+          <div style={{ width: '100%', maxWidth: 1200, maxHeight: '90vh', overflow: 'auto' }}>
+            <DagView rootTaskId={dagViewTaskId} onClose={() => setDagViewTaskId(null)} />
+          </div>
+        </div>
+      )}
     </DashboardPage>
   );
 }
@@ -967,6 +986,8 @@ function RightPanel({
   monitorQueueRows,
   selectedMonitorTaskName,
   selectedTaskId,
+  onlineCount,
+  queuedCount,
   onCreateDemoTask,
   onCreateDemoWorkflow,
   onDependencyDraftChange,
@@ -979,6 +1000,8 @@ function RightPanel({
   monitorQueueRows: MonitorTaskRowData[];
   selectedMonitorTaskName: string;
   selectedTaskId: string;
+  onlineCount: number;
+  queuedCount: number;
   onCreateDemoTask: (type: TaskTypeValue) => void;
   onCreateDemoWorkflow: () => void;
   onDependencyDraftChange: (value: string) => void;
@@ -986,7 +1009,7 @@ function RightPanel({
 }) {
   return (
     <aside className="right-stack">
-      <PanelTitle title="任务队列" detail="17 个排队中" />
+      <PanelTitle title="任务队列" detail={`${queuedCount} 个排队中`} />
       <div className="queue-list monitor-queue" id="tasks">
         {monitorQueueRows.map((task) => (
           <MonitorTaskRow
@@ -998,7 +1021,7 @@ function RightPanel({
         ))}
       </div>
 
-      <PanelTitle title="智能体状态" detail="24 在线" />
+      <PanelTitle title="智能体状态" detail={`${onlineCount} 在线`} />
       <div className="agent-list monitor-agent-list" id="agents">
         {agentRoomStatusRows.map((agent) => (
           <AgentRoomStatusRow key={agent.name} row={agent} />
@@ -1262,14 +1285,16 @@ function DeployStep({ step }: { step: DeployStepData }) {
   );
 }
 
-function DagOverlay({
+function DagPanel({
   tasks,
   selectedTaskId,
   onSelectTask,
+  onViewDag,
 }: {
   tasks: Task[];
   selectedTaskId: string;
   onSelectTask: (task: Task) => void;
+  onViewDag: (taskId: string) => void;
 }) {
   return (
     <aside className="dag-overlay" aria-label="DAG 调度图">
@@ -1295,6 +1320,15 @@ function DagOverlay({
           <p className="dag-empty">暂无依赖，创建 V2 工作流后显示链路</p>
         )}
       </div>
+      {tasks.length > 0 && (
+        <button
+          type="button"
+          onClick={() => onViewDag(tasks[0].id)}
+          style={{ margin: '8px 12px', padding: '6px 12px', background: '#1e293b', color: '#a78bfa', border: '1px solid #334155', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
+        >
+          🔍 查看完整 DAG 图
+        </button>
+      )}
     </aside>
   );
 }

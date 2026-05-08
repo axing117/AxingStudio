@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { rooms, characters } from '@axing/remotion/workshopConfig';
 import type { Task, TaskEvent } from '@axing/shared';
-import { CharExpression } from './CharExpression';
 import { StatusEffect } from './StatusEffect';
 import './LiveWorkshop.css';
 
@@ -202,7 +201,7 @@ function LiveRoom({
       <img
         alt={room.name}
         className="room-bg"
-        src={`/assets/offices/${room.id}.png`}
+        src={`./assets/offices/${room.id}.png`}
       />
       <RoomScanLine glow={room.glow} />
       <RoomPulse glow={room.glow} />
@@ -318,14 +317,13 @@ function LiveCharacter({
       <img
         alt={character.name}
         className="char-sprite pixelated"
-        src={`/assets/remotion-sprites/${spriteName}.png`}
+        src={`./assets/remotion-sprites/${spriteName}.png`}
       />
       <div
         className="char-aura pixelated"
         style={{ '--room-color': room.color } as React.CSSProperties}
       />
       <ActionPixels action={character.action} color={room.color} />
-      <CharExpression status={status} scale={character.scale * 1.55} />
       <StatusEffect status={status} taskTitle={charState?.taskTitle} />
     </div>
   );

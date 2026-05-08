@@ -1,0 +1,33 @@
+{
+  "title": "V2 工作流：媒体包装",
+  "type": "video-preview",
+  "durationSec": 8,
+  "generatedAt": "2026-05-06T11:27:08.148Z",
+  "worker": "hermes-mock",
+  "scenes": [
+    {
+      "index": 0,
+      "type": "title-card",
+      "text": "把工程产物包装成媒体预览",
+      "durationSec": 3
+    },
+    {
+      "index": 1,
+      "type": "transition",
+      "effect": "fade",
+      "durationSec": 1
+    },
+    {
+      "index": 2,
+      "type": "content",
+      "text": "阿星工坊 AI 媒体室自动生成",
+      "durationSec": 5
+    },
+    {
+      "index": 3,
+      "type": "end-card",
+      "text": "Axing Studio V2",
+      "durationSec": 3
+    }
+  ]
+}

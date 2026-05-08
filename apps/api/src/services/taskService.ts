@@ -100,11 +100,11 @@ export function failTask(taskId: string, error: string): Task | null {
     const task = getOne(db, "SELECT * FROM tasks WHERE id = ? AND status = 'running'", [taskId]);
     if (!task) return null;
     const retryCount = (task.retry_count as number) + 1;
-    const newStatus: string = retryCount < (task.max_retries as number) ? 'retrying' : 'failed';
-    const clearAgentId = newStatus === 'retrying' ? null : task.agent_id;
+    // 允许重试时直接回 queued，靠 retry_count 区分首次/重试，避免 retrying 状态无人领取
+    const newStatus: string = retryCount < (task.max_retries as number) ? 'queued' : 'failed';
     db.run(
-      `UPDATE tasks SET status = ?, error = ?, retry_count = ?, lease_expires_at = NULL, agent_id = ?, updated_at = datetime('now') WHERE id = ?`,
-      [newStatus, error, retryCount, clearAgentId, taskId]
+      `UPDATE tasks SET status = ?, error = ?, retry_count = ?, lease_expires_at = NULL, agent_id = NULL, updated_at = datetime('now') WHERE id = ?`,
+      [newStatus, error, retryCount, taskId]
     );
     if (task.agent_id) {
       db.run(
@@ -158,4 +158,30 @@ function rowToTask(row: Record<string, unknown>): Task {
 
 function jsonParse(s: string): Record<string, unknown> {
   try { return JSON.parse(s); } catch { return {}; }
+}
+
+/** 自动领取下一个可用任务（用于Mock执行器） */
+export function claimNextTask(agentId: string, capabilities: string[]): { task: Task; leaseExpiresAt: string } | null {
+  const db = getDb();
+  
+  // 根据能力确定可以处理的任务类型
+  const types: string[] = [];
+  if (capabilities.some(c => c.startsWith('oracle'))) types.push('oracle');
+  if (capabilities.some(c => c.startsWith('forge'))) types.push('forge');
+  if (capabilities.some(c => c.startsWith('hermes'))) types.push('hermes');
+  
+  if (types.length === 0) return null;
+  
+  // 查找第一个可用任务
+  const placeholders = types.map(() => '?').join(',');
+  const task = getOne(db, `
+    SELECT * FROM tasks 
+    WHERE status = 'queued' AND type IN (${placeholders})
+    ORDER BY created_at ASC
+    LIMIT 1
+  `, types);
+  
+  if (!task) return null;
+  
+  return claimTask(task.id as string, agentId);
 }

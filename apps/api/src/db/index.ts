@@ -31,7 +31,7 @@ export function getDb(): Database {
   return db;
 }
 
-/** Persist in-memory DB to disk */
+/** Persist in-memory DB to disk — called after every write operation */
 export function saveDb(): void {
   if (!db) return;
   const data = db.export();
@@ -39,10 +39,10 @@ export function saveDb(): void {
   writeFileSync(DB_PATH, buffer);
 }
 
-// Auto-save every 30s
+// Auto-save every 5s (safety net; individual writes also save via helpers)
 setInterval(() => {
   try { saveDb(); } catch { /* silent */ }
-}, 30_000);
+}, 5_000);
 
 // Save on process exit
 process.on('exit', () => saveDb());
@@ -76,6 +76,7 @@ export function getAll(db: Database, sql: string, params: unknown[] = []): Recor
 
 export function execRun(db: Database, sql: string, params: unknown[] = []): number {
   db.run(sql, params);
+  saveDb(); // persist immediately after write
   // Get last insert rowid
   const r = getOne(db, 'SELECT last_insert_rowid() as id');
   return (r?.id as number) || 0;
@@ -87,6 +88,7 @@ export function transaction<T>(db: Database, fn: () => T): T {
   try {
     const result = fn();
     db.run('COMMIT');
+    saveDb(); // persist immediately after transaction
     return result;
   } catch (e) {
     db.run('ROLLBACK');
