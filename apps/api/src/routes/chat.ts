@@ -7,7 +7,7 @@ import { recordEvent } from '../services/eventService.js';
 import { getDb } from '../db/index.js';
 import { EventType } from '@axing/shared';
 
-const CLAUDE_PATH = process.env.CLAUDE_PATH || 'C:\\Users\\rochelimit\\.local\\bin\\claude.exe';
+const CLAUDE_PATH = process.env.CLAUDE_PATH || `${process.env.USERPROFILE || process.env.HOME || '.'}\\.local\\bin\\claude.exe`;
 const CLAUDE_TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS || '120000');
 
 // Direct API config — bypasses CLI for lower latency
@@ -37,9 +37,10 @@ function systemPrompt(room: string): string {
   const base = '你是一个多智能体工坊"阿星工坊"的一员。用中文回复。保持简洁。';
 
   // 动态获取在线执行器的能力
-  const onlineExecutors = executorSvc.listExecutors().filter(e => e.status === 'online');
+  const onlineExecutors = executorSvc.listExecutors().filter(e => e.status === 'online' && e.type !== 'mock' && !e.id.startsWith('queue-'));
+  const allExecutors = executorSvc.listExecutors().filter(e => e.type !== 'mock' && !e.id.startsWith('queue-'));
   const capabilities = new Set(onlineExecutors.flatMap(e => e.capabilities));
-  
+
   const hasOracle = capabilities.has('oracle.plan') || capabilities.has('oracle.review');
   const hasForge = capabilities.has('forge.implement') || capabilities.has('forge.review');
   const hasHermes = capabilities.has('hermes.media');
@@ -52,10 +53,28 @@ function systemPrompt(room: string): string {
 
   const roomsList = rooms.length > 0 ? rooms.join('\n') : '- 当前无可用工作室，请先启动Agent';
 
+  // 实际在线的 Executor 列表（只包含真实 Agent，不含 mock 和 queue）
+  const onlineExecutorNames = onlineExecutors.map(e => e.name);
+  const offlineExecutorNames = allExecutors.filter(e => e.status !== 'online').map(e => e.name);
+  const actualExecutorInfo = onlineExecutorNames.length > 0
+    ? `当前在线 Agent: ${onlineExecutorNames.join(', ')}`
+    : '当前没有真实 Agent 在线（仅有内置 Mock 演示执行器）。';
+
   const prompts: Record<string, string> = {
     command: `${base}
-你是运维指挥官。你可以将任务路由到以下工作室：
+你是运维指挥官。严格按以下实际状态回复，不要编造项目计划或假设的 Agent：
+
+【实际运行状态】
+${actualExecutorInfo}
+${offlineExecutorNames.length > 0 ? `已注册但离线: ${offlineExecutorNames.join(', ')}` : ''}
+
+【可用工作室】
 ${roomsList}
+
+用户询问"接入了几个Agent/协作体/工作室"时，只能报告【实际运行状态】部分的在线 Agent。
+不要提"计划"、"预留"、"代码里有"、"规划中"、"编译时"等任何推测或描述性内容。
+不要提不在线的 Agent 名称（包括 Hermes、Sentinel 等），除非它们确实在线。
+不知道就说不知道，就事论事报告当前实际数据。
 
 当用户需求需要多个工作室协作时（比如"从零做一个系统"），
 正常回复后，在末尾用以下格式建议创建工作流：

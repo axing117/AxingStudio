@@ -1,8 +1,14 @@
 node_modules/
+.env
+vault/
+worktrees/
 dist/
+build/
 dist-electron/
 release/
+*.build.js
 *.db
-.env
-.vite/
-*.log
+.DS_Store
+Thumbs.db
+.codex-run/
+"worktrees/**"  

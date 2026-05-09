@@ -1,6 +1,7 @@
 /**
  * API Server — 可集成版本
  * 导出 startApi() 函数，供 Electron 主进程直接调用
+ * 同时托管 Web 前端静态文件，让 Electron 加载 localhost:PORT 即可
  */
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -23,22 +24,38 @@ import { markOfflineExecutors } from './services/executorService.js';
 import { getTaskQueue } from './services/taskQueue.js';
 import { registerErrorHandler } from './middleware/errorHandler.js';
 import { startMockProcessor } from './services/mockAgent.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, extname } from 'node:path';
 
 let app: ReturnType<typeof Fastify> | null = null;
 
+const MIME: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+};
+
+function getWebDistDir(): string {
+  return process.env.WEB_DIST_DIR || join(config.baseDir, '..', 'web', 'dist');
+}
+
 export async function startApi(port?: number): Promise<void> {
-  if (app) return; // 已启动
+  if (app) return;
 
   const apiPort = port || config.port;
 
-  // Init DB
   await initDb();
 
   app = Fastify({ logger: false });
 
   await app.register(cors, { origin: true });
 
-  // Routes
+  // API Routes
   taskRoutes(app);
   agentRoutes(app);
   executorRoutes(app);
@@ -52,19 +69,47 @@ export async function startApi(port?: number): Promise<void> {
   workflowRoutes(app);
   sentinelRoutes(app);
 
-  // Global error handler
   registerErrorHandler(app);
 
   app.get('/api/health', async () => ({ ok: true, data: { status: 'alive' } }));
 
-  // Start task queue processor
+  // Serve web frontend static files
+  const webDist = getWebDistDir();
+  if (existsSync(webDist)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app.get('/*', async (req: any, reply: any) => {
+      let urlPath = (req.params as { '*'?: string })['*'] || 'index.html';
+      if (!urlPath || urlPath === '/') urlPath = 'index.html';
+
+      // Don't interfere with API routes
+      if (urlPath.startsWith('api/')) {
+        return reply.status(404).send({ ok: false, error: 'Not found' });
+      }
+
+      const filePath = join(webDist, urlPath);
+      if (!existsSync(filePath)) {
+        // SPA fallback: return index.html for unknown paths
+        const indexHtml = join(webDist, 'index.html');
+        if (existsSync(indexHtml)) {
+          return reply.type('text/html').send(readFileSync(indexHtml, 'utf-8'));
+        }
+        return reply.status(404).send({ ok: false, error: 'Not found' });
+      }
+
+      const ext = extname(filePath).toLowerCase();
+      const mime = MIME[ext] || 'application/octet-stream';
+      return reply.type(mime).send(readFileSync(filePath));
+    });
+  }
+
+  // Start task queue
   const queue = getTaskQueue();
   queue.start();
 
-  // Start Mock Agent processor
+  // Start Mock Agent (will be auto-stopped when real agent registers)
   startMockProcessor();
 
-  // Mark stale agents/executors offline every 10s
+  // Heartbeat cleanup
   setInterval(() => {
     try { markOfflineAgents(config.heartbeatTimeoutMs); } catch { /* silent */ }
     try { markOfflineExecutors(config.heartbeatTimeoutMs); } catch { /* silent */ }

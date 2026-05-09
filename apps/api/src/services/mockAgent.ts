@@ -1,6 +1,7 @@
 /**
  * Mock Agent — 内置测试执行器
- * 自动完成任务，用于演示和测试
+ * 仅在无真实 Agent 时作为 fallback 运行
+ * 有真实 Agent 时自动禁用，避免与真 Worker 争抢任务
  */
 
 import * as taskSvc from './taskService.js';
@@ -9,22 +10,33 @@ import { EventType } from '@axing/shared';
 
 const MOCK_EXECUTOR_ID = 'mock-agent-internal';
 let isRunning = false;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-/** 启动Mock任务处理 */
+/** 启动Mock任务处理（仅在无外部 Agent 时生效） */
 export function startMockProcessor(): void {
   if (isRunning) return;
   isRunning = true;
-  
-  console.log('[MockAgent] 启动Mock任务处理器');
-  
-  // 每2秒检查一次任务
-  setInterval(async () => {
+
+  console.log('[MockAgent] 启动Mock任务处理器（fallback 模式）');
+
+  pollTimer = setInterval(async () => {
     try {
       await processNextTask();
     } catch (err) {
       console.error('[MockAgent] 处理任务失败:', err);
     }
   }, 2000);
+}
+
+/** 停止 Mock 处理器（当检测到真实 Agent 时调用） */
+export function stopMockProcessor(): void {
+  if (!isRunning) return;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  isRunning = false;
+  console.log('[MockAgent] 已停止（真实 Agent 已接管）');
 }
 
 /** 处理下一个任务 */

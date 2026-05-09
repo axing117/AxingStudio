@@ -24,7 +24,7 @@ const API_URL = trimTrailingSlash(process.env.API_URL || 'http://localhost:3001'
 const POLL_MS = numberEnv('POLL_MS', 2_500);
 const EXECUTOR_HEARTBEAT_MS = numberEnv('EXECUTOR_HEARTBEAT_MS', 8_000);
 const TASK_HEARTBEAT_MS = numberEnv('TASK_HEARTBEAT_MS', 10_000);
-const CLAUDE_PATH = process.env.CLAUDE_PATH || 'C:\\Users\\rochelimit\\.local\\bin\\claude.exe';
+const CLAUDE_PATH = process.env.CLAUDE_PATH || `${process.env.USERPROFILE || process.env.HOME || '.'}\\.local\\bin\\claude.exe`;
 const CLAUDE_TIMEOUT_MS = numberEnv('CLAUDE_TIMEOUT_MS', 120_000);
 
 // Capability -> task type mapping: which task roles this executor handles

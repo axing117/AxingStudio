@@ -10,7 +10,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
 # 1. 构建 shared 包
-Write-Host "[1/4] 构建 shared 包..." -ForegroundColor Yellow
+Write-Host "[1/5] 构建 shared 包..." -ForegroundColor Yellow
 npm -w packages/shared run build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "shared 包构建失败!" -ForegroundColor Red
@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 2. 构建 API 后端
-Write-Host "[2/4] 构建 API 后端..." -ForegroundColor Yellow
+Write-Host "[2/5] 构建 API 后端..." -ForegroundColor Yellow
 npm -w apps/api run build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "API 构建失败!" -ForegroundColor Red
@@ -26,21 +26,30 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # 3. 构建 Web 前端
-Write-Host "[3/4] 构建 Web 前端..." -ForegroundColor Yellow
+Write-Host "[3/5] 构建 Web 前端..." -ForegroundColor Yellow
 npm -w apps/web run build
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Web 前端构建失败!" -ForegroundColor Red
     exit 1
 }
 
-# 4. 构建并打包 Electron 应用
-Write-Host "[4/4] 打包 Electron 应用..." -ForegroundColor Yellow
+# 4. 构建 Worker
+Write-Host "[4/5] 构建 mock-agent Worker..." -ForegroundColor Yellow
+node workers/mock-agent/build.js
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "mock-agent 构建失败!" -ForegroundColor Red
+    exit 1
+}
+
+# 5. 构建并打包 Electron 应用
+Write-Host "[5/5] 打包 Electron 应用..." -ForegroundColor Yellow
 cd apps/agent-runtime
 npm run pack
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Electron 打包失败!" -ForegroundColor Red
     exit 1
 }
+Set-Location $root
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green

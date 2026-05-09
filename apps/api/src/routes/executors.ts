@@ -3,6 +3,9 @@ import * as execSvc from '../services/executorService.js';
 import * as eventSvc from '../services/eventService.js';
 import { EventType, ErrorCode } from '@axing/shared';
 import type { RegisterExecutorRequest } from '@axing/shared';
+import { stopMockProcessor } from '../services/mockAgent.js';
+
+let mockStopped = false;
 
 export function executorRoutes(app: FastifyInstance): void {
   // POST /api/executors/register
@@ -18,6 +21,14 @@ export function executorRoutes(app: FastifyInstance): void {
     eventSvc.recordEvent(EventType.ExecutorRegistered, undefined, executor.id, {
       name: executor.name, type: executor.type, capabilities: executor.capabilities,
     });
+
+    // 当有真实 Agent（非 mock）注册时，停止内置 Mock 处理器
+    if (!mockStopped && (body.type as string) !== 'mock') {
+      stopMockProcessor();
+      mockStopped = true;
+      console.log('[Executors] 真实 Agent 注册，Mock 处理器已停止');
+    }
+
     return reply.status(201).send({ ok: true, data: executor });
   });
 
