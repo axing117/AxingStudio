@@ -37,11 +37,11 @@ Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; $envB
 
 # Dashboard (独立窗口)
 Write-Host "[2/3] Dashboard → http://localhost:5173" -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; Write-Host 'Dashboard — http://localhost:5173' -ForegroundColor Yellow; npm -w apps/web run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; $envBlock Write-Host 'Dashboard — http://localhost:5173' -ForegroundColor Yellow; npm -w apps/web run dev"
 
 # Agent Worker (独立窗口，传入 API key)
 Write-Host "[3/3] Agent Worker (Oracle/Forge)" -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; $envBlock Write-Host 'Agent Worker — API: $env:ANTHROPIC_MODEL (Oracle/Forge)' -ForegroundColor Magenta; npm -w workers/mock-agent run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root'; $envBlock Write-Host 'Agent Worker — Oracle/Forge via DeepSeek API' -ForegroundColor Magenta; npm -w workers/mock-agent run dev"
 
 Start-Sleep -Seconds 5
 
