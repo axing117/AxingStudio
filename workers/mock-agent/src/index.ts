@@ -172,60 +172,71 @@ async function executeTask(executor: Executor, task: Task) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  真实 Claude CLI 执行                                                */
+/*  AI 后端配置                                                          */
 /* ------------------------------------------------------------------ */
-function buildResult(task: Task, rawOutput: string) {
-  const stamp = new Date().toISOString();
-  const fileSafeStamp = stamp.replace(/[:.]/g, '-');
-  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
+const API_BASE = process.env.ANTHROPIC_BASE_URL || 'https://api.deepseek.com/anthropic';
+const API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const API_MODEL = process.env.ANTHROPIC_MODEL || 'deepseek-v4-flash';
+const USE_DIRECT_API = !!API_KEY;
 
-  if (task.type === 'oracle') {
-    const filename = `oracle-${fileSafeStamp}.md`;
-    return {
-      filename,
-      fileContent: rawOutput,
-      artifact: {
-        type: ArtifactType.Text,
-        name: `Oracle — ${task.title}`,
-        path: `vault/${task.id}/${filename}`,
-        metadata: { role: 'strategy', brief, generatedAt: stamp, source: 'claude-code' },
-      },
-      output: {
-        summary: `策略拆解完成：${brief}`,
-        nextStep: '交给 Forge 或 Hermes 继续执行',
-        artifactPath: `vault/${task.id}/${filename}`,
-        worker: 'claude-code-executor',
-        completedAt: stamp,
-      },
-    };
+/* ------------------------------------------------------------------ */
+/*  任务执行 — AI 调用入口                                               */
+/* ------------------------------------------------------------------ */
+async function executeRealTask(task: Task) {
+  if (USE_DIRECT_API) {
+    try {
+      return await executeViaAPI(task);
+    } catch (apiErr) {
+      log('executor', `API failed, trying CLI: ${formatError(apiErr)}`);
+    }
   }
-
-  // forge — extract code block
-  const codeMatch = rawOutput.match(/```(?:typescript|ts)\n([\s\S]*?)```/);
-  const fileContent = codeMatch ? codeMatch[1] : rawOutput;
-  const filename = `forge-${fileSafeStamp}.ts`;
-
-  return {
-    filename,
-    fileContent,
-    artifact: {
-      type: ArtifactType.Code,
-      name: `Forge — ${task.title}`,
-      path: `vault/${task.id}/${filename}`,
-      metadata: { role: 'engineering', generatedAt: stamp, source: 'claude-code' },
-    },
-    output: {
-      summary: `工程执行完成：${brief}`,
-      checks: ['claude-code-generated'],
-      artifactPath: `vault/${task.id}/${filename}`,
-      worker: 'claude-code-executor',
-      completedAt: stamp,
-    },
-  };
+  return await executeViaCLI(task);
 }
 
-async function executeRealTask(task: Task) {
-  const prompt = buildPrompt(task);
+/* ------------------------------------------------------------------ */
+/*  Direct API 调用 (DeepSeek Anthropic-compatible endpoint)            */
+/* ------------------------------------------------------------------ */
+async function executeViaAPI(task: Task) {
+  const { system, user } = buildAPIPrompts(task);
+  log('executor', `calling ${API_MODEL} via API...`);
+
+  const response = await fetch(`${API_BASE}/v1/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: API_MODEL,
+      max_tokens: 4096,
+      system,
+      messages: [{ role: 'user', content: user }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'unknown');
+    throw new Error(`API ${response.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = (await response.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+  };
+
+  const textContent = data.content?.find((c) => c.type === 'text')?.text;
+  if (!textContent) {
+    throw new Error('API returned empty content');
+  }
+
+  return buildResult(task, textContent);
+}
+
+/* ------------------------------------------------------------------ */
+/*  CLI fallback — 本地 spawn Claude Code                               */
+/* ------------------------------------------------------------------ */
+async function executeViaCLI(task: Task) {
+  const prompt = buildCLIPrompt(task);
   log('executor', `spawning Claude Code CLI...`);
   const { stdout, stderr, exitCode } = await spawnClaude(prompt, CLAUDE_TIMEOUT_MS);
 
@@ -262,7 +273,37 @@ function spawnClaude(
   });
 }
 
-function buildPrompt(task: Task): string {
+/* ------------------------------------------------------------------ */
+/*  Prompt 构建                                                          */
+/* ------------------------------------------------------------------ */
+function buildAPIPrompts(task: Task): { system: string; user: string } {
+  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
+
+  if (task.type === 'oracle') {
+    return {
+      system: `你是"阿星工坊"的策略分析师（Oracle）。用中文回复。
+职责：将用户需求拆解为结构化任务列表，分配给工程室(Forge)和媒体室(Hermes)。
+输出一份完整的 Markdown 策略文档。`,
+      user: `## 需求\n${brief}\n\n## 输出要求
+1. **需求概述**：一句话总结核心目标
+2. **任务拆解**：列出 3-5 个可执行子任务表格（序号/任务/类型/优先级），类型填 forge 或 hermes
+3. **风险提示**：点出关键风险点
+4. **建议下一步**：nextStep 字段，建议接下来交给哪个角色`,
+    };
+  }
+
+  return {
+    system: `你是"阿星工坊"的工程师（Forge）。用中文回复。
+职责：根据任务规格编写可执行的 TypeScript 代码。输出纯代码，不要额外解释。`,
+    user: `## 任务\n${brief}\n\n## 输出要求
+1. 完整的 TypeScript 模块，包含类型定义和主函数
+2. 代码整洁、可直接运行
+3. 底部包含 smoke test（if (require.main === module) 块）
+4. 纯代码，用 \`\`\`typescript 包裹，不要解释文字`,
+  };
+}
+
+function buildCLIPrompt(task: Task): string {
   const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
 
   if (task.type === 'oracle') {
@@ -294,6 +335,60 @@ ${brief}
 2. 代码整洁、可直接运行
 3. 底部包含 smoke test（if (require.main === module) 块）
 4. 输出纯代码，不要额外的解释文字`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  结果构建                                                            */
+/* ------------------------------------------------------------------ */
+function buildResult(task: Task, rawOutput: string) {
+  const stamp = new Date().toISOString();
+  const fileSafeStamp = stamp.replace(/[:.]/g, '-');
+  const brief = typeof task.input.brief === 'string' ? task.input.brief : task.title;
+  const source = USE_DIRECT_API ? API_MODEL : 'claude-code';
+
+  if (task.type === 'oracle') {
+    const filename = `oracle-${fileSafeStamp}.md`;
+    return {
+      filename,
+      fileContent: rawOutput,
+      artifact: {
+        type: ArtifactType.Text,
+        name: `Oracle — ${task.title}`,
+        path: `vault/${task.id}/${filename}`,
+        metadata: { role: 'strategy', brief, generatedAt: stamp, source },
+      },
+      output: {
+        summary: `策略拆解完成：${brief}`,
+        nextStep: '交给 Forge 或 Hermes 继续执行',
+        artifactPath: `vault/${task.id}/${filename}`,
+        worker: 'claude-code-executor',
+        completedAt: stamp,
+      },
+    };
+  }
+
+  // forge — extract code block from markdown
+  const codeMatch = rawOutput.match(/```(?:typescript|ts)\n([\s\S]*?)```/);
+  const fileContent = codeMatch ? codeMatch[1] : rawOutput;
+  const filename = `forge-${fileSafeStamp}.ts`;
+
+  return {
+    filename,
+    fileContent,
+    artifact: {
+      type: ArtifactType.Code,
+      name: `Forge — ${task.title}`,
+      path: `vault/${task.id}/${filename}`,
+      metadata: { role: 'engineering', generatedAt: stamp, source },
+    },
+    output: {
+      summary: `工程执行完成：${brief}`,
+      checks: [`${source}-generated`],
+      artifactPath: `vault/${task.id}/${filename}`,
+      worker: 'claude-code-executor',
+      completedAt: stamp,
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */
