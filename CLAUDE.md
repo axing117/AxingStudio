@@ -41,7 +41,7 @@ workers/
 - SSE 任务事件驱动角色状态
 
 ## Git
-- 已初始化，3 次提交，均未 push
+- 已推送到 GitHub: https://github.com/axing117/AxingStudio
 
 ## 网络
 - Windows IP: 192.168.1.77

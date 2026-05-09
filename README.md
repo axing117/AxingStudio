@@ -1,102 +1,98 @@
-# Axing Studio V1
+# Axing Studio V2 — 本地多智能体协作系统
 
-阿星工坊 V1 是一个本地可运行的多 Agent 任务调度闭环：CommandCenter 负责任务、租约、心跳、事件和产物记录；Dashboard 展示系统状态；Mock Agent 模拟 Oracle、Forge、Hermes 三类节点执行任务。
+一个部署在本地的 AI Agent 矩阵：指挥中心解析意图 → DAG 编排工作流 → Agent 领取执行 → SSE 实时推送结果。
 
-## V1 范围
+**不是 SaaS。本地运行，本地 Agent，本地文件系统。**
 
-- 已做：Fastify CommandCenter、SQLite/sql.js 数据库、共享 TypeScript 契约、React Dashboard、Mock Oracle/Forge/Hermes。
-- 已做：创建任务、Agent 注册、任务领取、任务心跳续租、完成/失败、事件日志、mock artifact 回传。
-- 暂不做：真实视频生成、Tauri/Electron 桌面壳、Windows 安装器、自动更新、生产级权限和长期运行保障。
+## 核心能力
+
+| 模块 | 说明 |
+|------|------|
+| **DAG 编排引擎** | 任务依赖链（`dependsOn`）、`TaskStatus.Blocked`、事务内级联解锁下游 |
+| **SSE 事件推送** | 客户端连接管理、broadcast 全量推送、15s 心跳保活、连接时 catch-up |
+| **File Vault** | 按 taskId 隔离存储、上传/下载/列表、支持 .md/.ts/.json 预览 |
+| **Git Worktree** | 按任务创建隔离分支 `task/<id>`、创建/列表/删除 API |
+| **Agent 矩阵** | 注册 → 心跳 → 轮询领取 → 执行完成，三种 Agent 各司其职 |
+
+## Agent 分工
+
+| Agent | 引擎 | 能力 |
+|-------|------|------|
+| **Oracle** | Claude CLI | 策略拆解、需求分析 → 输出 .md |
+| **Forge** | Claude CLI | 代码生成、工程实施 → 输出 .ts + worktree |
+| **Hermes** | MiMo + Seedance | 图片生成、视频制作 → 输出 .json |
+
+一个 Agent 只对应一种能力类型，不重叠。任务 type 决定路由。
+
+## 工作流演示
+
+```
+POST /api/workflows (Oracle → Forge → Hermes, dependsOnIndexes)
+         │
+Oracle "策略拆解" ─ completed ──→ unblock Forge ─ completed ──→ unblock Hermes ─ completed
+         │                          │                              │
+     .md → vault               .ts → vault + worktree       .json → vault
+```
 
 ## 技术栈
 
-- Monorepo: npm workspaces
-- Shared: TypeScript DTO / entity / enum contract
-- API: Fastify + sql.js
-- Web: React + Vite + TypeScript
-- Worker: Node.js + tsx mock loop
+- **API 后端**: Fastify + TypeScript + sql.js（`apps/api/`）
+- **前端**: React + Vite + TypeScript，SSE 实时事件驱动（`apps/web/`）
+- **Worker**: Node.js Mock Agent + 扫描器架构（`workers/mock-agent/`）
+- **共享契约**: TypeScript DTO/entity/enum（`packages/shared/`）
+- **冒烟测试**: `scripts/smoke-test.ts`，19 项全链路测试
 
-## 一键启动（推荐）
-
-右键 `start.ps1` → **使用 PowerShell 运行**，自动打开三个终端窗口 + 浏览器。
-
-## 手动启动
+## 一键启动
 
 ```powershell
-cd AxingStudio
+.\start.ps1   # 启动 API + Web + Mock Agent，自动打开浏览器
+```
+
+或手动：
+
+```powershell
 npm install
-
-# 终端 1 — API
-npm -w apps/api run dev
-
-# 终端 2 — Dashboard
-npm -w apps/web run dev
-
-# 终端 3 — Mock Agent
-npm -w workers/mock-agent run dev
+npm -w apps/api run dev           # 终端 1 → localhost:3001
+npm -w apps/web run dev           # 终端 2 → localhost:5173
+npm -w workers/mock-agent run dev # 终端 3 → Agent Worker
 ```
 
-访问：
+## API 概览
 
-- API: `http://localhost:3001/api/health`
-- Dashboard: `http://localhost:5173`
-
-## Mock Agent 环境变量
-
-默认 `npm -w workers/mock-agent run dev` 会同时启动 Oracle、Forge、Hermes 三个模拟节点。
-
-```powershell
-$env:AGENT_TYPE="oracle"; npm -w workers/mock-agent run dev
-$env:AGENT_TYPE="forge,hermes"; npm -w workers/mock-agent run dev
-$env:API_URL="http://localhost:3001"; npm -w workers/mock-agent run dev
+```
+POST   /api/workflows          # 创建工作流（支持 dependsOnIndexes）
+GET    /api/events/stream      # SSE 实时事件流
+POST   /api/vault/:taskId      # 上传产物到 Vault
+GET    /api/vault/:taskId      # 列出任务产物
+POST   /api/worktrees/:taskId  # 创建 Git Worktree
+GET    /api/worktrees          # 列出所有 Worktree
+POST   /api/tasks              # 创建任务
+POST   /api/tasks/:id/claim    # Agent 领取任务
+POST   /api/tasks/:id/complete # 完成任务（自动解锁下游）
+POST   /api/agents/register    # Agent 注册
+POST   /api/agents/:id/heartbeat # Agent 心跳
 ```
 
-可选参数：
+## 架构理念
 
-- `AGENT_TYPE`: `all`、`oracle`、`forge`、`hermes`，或逗号组合；默认 `all`。
-- `API_URL`: CommandCenter 地址；默认 `http://localhost:3001`。
-- `POLL_MS`: 轮询 queued 任务间隔；默认 `2500`。
-- `WORK_MIN_MS` / `WORK_MAX_MS`: 模拟执行时间范围；默认 `4000` / `9000`。
-- `FAILURE_RATE`: 模拟失败概率；默认 `0`。V1 建议保持 0，避免任务停在 retrying 状态影响演示。
+- **本地优先** — 不依赖外部云服务，Agent 进程运行在本机
+- **能力绑定** — Agent 只声明自己能做什么，不声明自己是谁
+- **级联自动化** — 上游完成 → 事务内解锁下游，无需人工触发
+- **可扫描接入** — 新 Agent 通过 scanner 模块自动发现和注册
 
-## Dashboard 操作
+## V1 → V2 演进
 
-1. 启动 API、Web、Mock Agent。
-2. 在 Dashboard 的“新建任务”里选择策略室、工程室或媒体室。
-3. 创建任务后，Mock Agent 会自动领取任务。
-4. 任务完成后，任务列表、事件流和 Vault 产物区会自动刷新。
+V1 完成了基础的任务调度闭环（创建/领取/心跳/完成）。V2 新增：
 
-Dashboard 目前使用 3 秒轮询，不使用 WebSocket/SSE。这个选择是为了让 V1 先稳定跑通，后续 V2 再升级实时事件流。
+- DAG 编排引擎（依赖声明 + 自动级联解锁）
+- SSE 实时事件推送（替代 V1 的 3 秒轮询）
+- File Vault（按任务隔离的文件系统存储）
+- Git Worktree（任务级代码隔离环境）
+- 冒烟测试套件（19 项全链路测试）
+- Agent 能力重叠修复 + retrying 状态机修复
 
-## API 契约
+## 待做
 
-核心接口：
-
-- `POST /api/tasks`
-- `GET /api/tasks?status=queued`
-- `POST /api/tasks/:id/claim`
-- `POST /api/tasks/:id/heartbeat`
-- `POST /api/tasks/:id/complete`
-- `POST /api/tasks/:id/fail`
-- `POST /api/agents/register`
-- `POST /api/agents/:id/heartbeat`
-- `GET /api/events?limit=50`
-- `GET /api/artifacts?taskId=xxx`
-- `POST /api/artifacts`
-
-所有接口统一返回：
-
-```ts
-type ApiResponse<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; code: ErrorCode };
-```
-
-## V2 扩展方向
-
-- 把 Dashboard 轮询替换成 SSE 或 WebSocket。
-- 给 retrying 任务增加明确的重新排队策略。
-- Forge 接 Git Worktree，Hermes 接真实图片/视频生成。
-- Sentinel 增加自动质检规则和人工审核入口。
-- Vault 从 mock path 迁移到真实文件系统或 MinIO。
-- 数据库从 sql.js 迁移到 PostgreSQL，并保留现有 DTO 契约。
+- Mock Agent 替换为真实 AI 调用（Claude API / DeepSeek API）
+- Sentinel 质量室接入
+- sql.js → PostgreSQL 迁移
